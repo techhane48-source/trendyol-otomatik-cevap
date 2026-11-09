@@ -1,0 +1,18 @@
+node_modules
+.env
+.env.local
+.env.*.local
+.next
+out
+coverage
+
+# Gömülü PostgreSQL veri dizinleri
+.pgdata
+
+*.log
+.DS_Store
+
+/src/generated/prisma
+
+# TypeScript artıkları
+*.tsbuildinfo

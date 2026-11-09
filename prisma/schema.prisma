@@ -1,0 +1,112 @@
+// Trendyol Soru Asistanı — Prisma şeması (FAZ 1: salt okunur)
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Trendyol satıcı (mağaza) kaydı.
+model Store {
+  id        String   @id @default(cuid())
+  /// Trendyol sellerId (supplierId). Benzersizdir.
+  sellerId  BigInt   @unique
+  name      String?
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questions Question[]
+  syncRuns  SyncRun[]
+
+  @@map("stores")
+}
+
+enum QuestionStatus {
+  WAITING_FOR_ANSWER
+  ANSWERED
+  REJECTED
+  UNKNOWN
+}
+
+/// Trendyol'dan çekilen müşteri sorusu. Salt okunur ayna kayıt.
+model Question {
+  id                 String         @id @default(cuid())
+  storeId            String
+  store              Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// Trendyol soru kimliği. Mağaza bazında benzersizdir.
+  trendyolQuestionId BigInt
+
+  text               String
+  status             QuestionStatus @default(UNKNOWN)
+  /// Trendyol'daki ham durum metni
+  rawStatus          String?
+
+  productName        String?
+  productMainId      String?
+  productId          String?
+  customerId         String?
+
+  /// Varsa satıcının verdiği cevap (salt okunur ayna; gönderim yapılmaz)
+  answerText         String?
+
+  /// Trendyol'daki oluşturma tarihi
+  askedAt            DateTime?
+  answeredAt         DateTime?
+
+  /// API'den gelen ham veri (ek alanlar dahil)
+  raw                Json?
+
+  firstSeenAt        DateTime       @default(now())
+  lastSyncedAt       DateTime       @default(now())
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@unique([storeId, trendyolQuestionId])
+  @@index([storeId, status])
+  @@index([askedAt])
+  @@map("questions")
+}
+
+enum SyncRunStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+/// Her senkronizasyon denemesinin kaydı: başlangıç, sonuç, sayaçlar, hata kodu.
+model SyncRun {
+  id           String        @id @default(cuid())
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  status       SyncRunStatus @default(RUNNING)
+  trigger      String        @default("manual")
+
+  startedAt    DateTime      @default(now())
+  finishedAt   DateTime?
+  durationMs   Int?
+
+  fetchedCount Int           @default(0)
+  savedCount   Int           @default(0)
+  pagesFetched Int           @default(0)
+
+  /// Hata durumunda HTTP kodu (401/403/429/5xx vb.) veya hata sınıfı
+  errorCode    String?
+  /// Gizli bilgi içermeyen, kısaltılmış hata açıklaması
+  errorMessage String?
+
+  /// Kullanılan filtreler (status, tarih aralığı vb.)
+  params       Json?
+
+  createdAt    DateTime      @default(now())
+
+  @@index([storeId, startedAt])
+  @@map("sync_runs")
+}
