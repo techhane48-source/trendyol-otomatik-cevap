@@ -85,6 +85,22 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 429/5xx gibi hatalarda yalnızca `error.type` / `error.code` alanlarını döndürür.
+ * Sağlayıcı mesajı ve istek başlıkları hiçbir zaman okunmaz/yansıtılmaz.
+ */
+async function readErrorDetail(response: Response): Promise<string | null> {
+  try {
+    const text = (await response.text()).slice(0, 2_000);
+    const parsed = JSON.parse(text) as { error?: { type?: unknown; code?: unknown } };
+    const type = typeof parsed.error?.type === "string" ? parsed.error.type : null;
+    const code = typeof parsed.error?.code === "string" ? parsed.error.code : null;
+    return [type, code].filter(Boolean).join(" / ") || null;
+  } catch {
+    return null;
+  }
+}
+
 function retryAfterMs(response: Response): number | null {
   const header = response.headers.get("retry-after");
   if (!header) return null;
@@ -144,10 +160,14 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
       });
 
       if (!response.ok) {
-        // Gövde bilinçli olarak okunmaz/yansıtılmaz.
+        // Gövde yansıtılmaz; yalnızca sağlayıcının hata TÜRÜ/KODU okunur (anahtar/PII taşımaz).
+        const detail = await readErrorDetail(response);
+
         const error = new LlmRequestError(
           `HTTP_${response.status}`,
-          `LLM sağlayıcısı isteği reddetti (HTTP ${response.status}).`,
+          detail
+            ? `LLM sağlayıcısı isteği reddetti (HTTP ${response.status} · ${detail}).`
+            : `LLM sağlayıcısı isteği reddetti (HTTP ${response.status}).`,
         ) as LlmRequestError & RetryMeta;
         error.retryable = RETRYABLE_STATUS.has(response.status);
         error.retryAfter = retryAfterMs(response);

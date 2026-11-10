@@ -101,7 +101,27 @@ try {
   console.log(`yanıt (ilk 200): ${completion.text.slice(0, 200)}`);
 } catch (error) {
   const code = error instanceof LlmRequestError ? error.code : "UNKNOWN";
-  console.error(`\nBAŞARISIZ: ${code}`);
+  const prisma = getPrisma();
+  try {
+    await prisma.llmUsage.create({
+      data: {
+        provider: provider.name,
+        model: provider.model,
+        promptVersion: env.LLM_PROMPT_VERSION,
+        outcome: "ERROR",
+        errorCode: code,
+        durationMs: Date.now() - startedAt,
+        estimated: true,
+        estimatedCostUSD: 0,
+        purpose: "smoke",
+      },
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
+  console.error("");
+  console.error(`BAŞARISIZ: ${code}`);
   console.error(error instanceof Error ? error.message : "Bilinmeyen hata");
+  console.error("Bu çağrı için ücret oluşmadı; başarısız kayıt llm_usages tablosuna yazıldı.");
   process.exit(2);
 }
