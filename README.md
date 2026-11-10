@@ -864,3 +864,47 @@ Panel: `http://localhost:3100/giris` → anahtar `APP_ACCESS_TOKEN`. Çerez `ty_
 ### Faz 1 kapsamı dışında
 Diğer sayfaların (sorular, taslaklar, siparişler, talepler, cevaplar, kalite) görsel tasarımı eski stilini korur;
 Faz 2'de aynı kabuk içinde yenilenecek.
+
+## GÖREV 012 — niyet odaklı cevap motoru ve mağaza politikaları
+
+### Sorun
+Eski motor her soruya aynı şablonu uyguluyordu: kategori ne olursa olsun "kumaş türü" gibi alanları zorunlu tutuyor,
+alan yoksa "kontrol edip ileteceğim" cevabı üretiyordu. Fiyat sorusunda kumaş aranması ve her cevabın kaçamak
+olması bunun sonucuydu.
+
+### Yeni akış
+1. **Niyet tespiti** (`src/lib/intents/taxonomy.ts`) — 10 niyet: özel ölçü/kesim, dikim/pile/aksesuar, kumaş,
+   fiyat, sipariş durumu, sipariş sonrası ölçü değişikliği, yıkama, montaj, kargo, diğer. Çok niyetli sorular
+   (ör. "2 metreye 2 metre dikiyor musunuz") hem ölçü hem dikim alanlarını ister.
+2. **Niyet bazlı zorunlu kaynaklar** — fiyat sorusu kumaş istemez; ölçü sorusu renk istemez.
+3. **Mağaza politikaları** (`StorePolicy`, `/policies`) — ürün bilgisinden ayrı 7 işletme kuralı. Metin değişince
+   doğrulama düşer; doğrulanmamış politika prompt'a **kesin bilgi olarak girmez**.
+4. **Cevap stratejisi** — `DIRECT` (tüm kaynak doğrulanmış), `PARTIAL` (bir kısmı), `ASK_DETAIL` (kaynak yok →
+   müşteriden ayrıntı iste), `HUMAN_REVIEW` (fiyat/sipariş gibi canlı veri gerekir).
+5. **Yasaklar** — genel kaçamak ifade ("kontrol edip ileteceğim"), dönüş sözü ("bilgi vereceğiz") ve fiyat
+   değişimi iddiası ("zam geldi") kaynak yokken engellenir; fiyat iddiası guardrail'de `PROMISE` uyarısı üretir.
+6. **Panel** — `/drafts` her taslakta niyet, strateji, kullanılan politikalar, eksik alanlar ve "insan incelemesi
+   gerekli" rozetini gösterir.
+
+### Gerçek 30 soruluk ölçüm
+`npm run quality:intent -- --onay --label baseline|after` (elle etiketlenmiş 30 gerçek yanıtlı soru; ölçüm
+taslakları iş bitince silinir, sorular korunur).
+
+| Metrik | Önce (006628e) | Sonra |
+| --- | --- | --- |
+| Niyet doğruluğu | ölçülmedi (niyet yok) | **0.97** (29/30) |
+| Somut cevap oranı | 0.00 | **0.50** |
+| Yanlış bilgi oranı | 0.03 | **0.00** |
+| Gereksiz kaçış oranı | 0.00 (kaynak yok) | **0.00** |
+| Kaçamak cevap oranı | 0.97 | **0.00** |
+| RESOLVED / NEEDS_INFO / GENERIC | 0 / 24 / 6 | 0 / 20 / 10 |
+
+Yorum: kaçamak cevap tamamen bitti ve yanlış bilgi 0'a indi. `RESOLVED` sayısı hâlâ 0 çünkü veritabanında
+**doğrulanmış ürün alanı ve doğrulanmış mağaza politikası yok**; motor doğru davranıp ayrıntı istiyor/insan
+incelemesine bırakıyor. Somut cevap oranının 1.00'a çıkması için `/product-bank` ve `/policies` ekranlarında
+satıcının bilgileri doğrulaması gerekir.
+
+### Test
+`tests/intents.test.ts` — 17 test: üç gerçek sorunun regresyonu, çok niyetli sınıflandırma, strateji kararları,
+politika kaydet/doğrula/metin değişince doğrulamanın düşmesi, doğrulanmamış politikanın prompt'a girmemesi,
+doğrulanmış politikanın kaynak olarak kullanılması. Toplam **339 test**.

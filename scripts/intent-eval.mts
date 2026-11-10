@@ -19,6 +19,15 @@ import { getPrisma } from "../src/lib/prisma";
  * Kullanım: npx tsx scripts/intent-eval.mts --onay [--label baseline|after]
  */
 
+/** Niyet sınıflandırıcı yalnızca yeni sürümde var; baseline karşılaştırmasında null kalır. */
+let detectIntents: ((text: string) => { primary: string; all: string[] }) | null = null;
+try {
+  const mod = await import("../src/lib/intents/taxonomy");
+  detectIntents = mod.detectIntents;
+} catch {
+  detectIntents = null;
+}
+
 const EVASIVE = [
   /kontrol edip/i,
   /kontrol edece/i,
@@ -118,6 +127,7 @@ async function main() {
         question: question.text.replace(/\s+/g, " ").slice(0, 120),
         label: LABELS[index] ?? "OTHER",
         intent: (draft as unknown as { intent?: string }).intent ?? null,
+        intents: detectIntents ? detectIntents(question.text).all : null,
         strategy: (draft as unknown as { strategy?: string }).strategy ?? null,
         resolution: draft.resolution,
         evasive,
@@ -138,7 +148,11 @@ async function main() {
   }
 
   const scored = results.filter((row) => !row.error);
-  const intentMatches = scored.filter((row) => row.intent && row.intent === row.label).length;
+  // Çok niyetli sorular için: elle etiketlenen niyet, tespit edilen niyetlerden biri mi?
+  const intentMatches = scored.filter((row) => {
+    const list = (row.intents as string[] | null) ?? (row.intent ? [row.intent as string] : []);
+    return list.includes(row.label as string);
+  }).length;
   const summary = {
     label,
     total: results.length,

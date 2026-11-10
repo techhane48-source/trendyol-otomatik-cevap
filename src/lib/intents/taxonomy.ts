@@ -35,15 +35,20 @@ export const INTENT_LABELS: Record<Intent, string> = {
 
 const LETTERS = "A-Za-zÇĞİÖŞÜçğıöşü";
 
+/**
+ * Türkçe güvenli kelime sınırı. JS'de `\b` ve `\w` ş/ğ/ı/ü harflerini kapsamaz,
+ * bu yüzden harf sınıfı elle tanımlanır.
+ */
 function word(pattern: string): RegExp {
   return new RegExp(`(?<![${LETTERS}])(?:${pattern})(?![${LETTERS}])`, "i");
 }
 
+const NUM = "\\d{2,4}";
+const SEP = "\\s*[x×/]\\s*";
+
 interface IntentRule {
   intent: Intent;
   pattern: RegExp;
-  /** Aynı metinde bu kalıp da varsa kural yükseltilir (ör. ölçü + sipariş = değişiklik). */
-  boost?: RegExp;
 }
 
 /** Sıra önemlidir: ilk eşleşen niyet birincil kabul edilir. */
@@ -51,43 +56,70 @@ const RULES: IntentRule[] = [
   {
     intent: "ORDER_CHANGE",
     pattern: word(
-      "öl[çc][a-zçğıöşü]*\\s*(de[ğg]i[şs]\\w*|d[üu]zelt|g[üu]ncelle)|de[ğg]i[şs]iklik\\s*(yap|talep)|sipari[şs]\\s*sonras",
+      "[öo]l[çc][a-zçğıöşü]*(\\s*de[ğg]i[şs][a-zçğıöşü]*|\\s*d[üu]zelt[a-zçğıöşü]*|\\s*g[üu]ncell[a-zçğıöşü]*)" +
+        "|de[ğg]i[şs]iklik\\s*(yap|talep)[a-zçğıöşü]*" +
+        "|sipari[şs]\\s*sonras[a-zçğıöşü]*",
     ),
   },
   {
     intent: "PRICE",
     pattern: word(
-      "fiyat|fiyatı|fiyatlar|zam|indirim|kampanya|kupon|promosyon|pahalı|pahali|ucuz|tutar|ücret|ucret|kaç\\s*lira|ne\\s*kadar|fark\\s*var",
+      "fiyat[a-zçğıöşü]*|zam[a-zçğıöşü]*|indirim[a-zçğıöşü]*|kampanya[a-zçğıöşü]*|kupon[a-zçğıöşü]*" +
+        "|promosyon[a-zçğıöşü]*|pahal[ıi][a-zçğıöşü]*|ucuz[a-zçğıöşü]*|tutar[a-zçğıöşü]*|[üu]cret[a-zçğıöşü]*" +
+        "|ka[çc]\\s*lira|ne\\s*kadar|fark\\s*var",
     ),
   },
   {
     intent: "ORDER_STATUS",
     pattern: word(
-      "sipari[şs]\\s*(no|numaras|numaram|durum|nerede|takip)|sipari[şs]im|kargoya\\s*ver|hazırlan|hazirlan|iptal|teslim\\s*edildi",
+      "sipari[şs][a-zçğıöşü]*(\\s*numara[a-zçğıöşü]*)?|numara[a-zçğıöşü]*\\s*sipari[şs][a-zçğıöşü]*" +
+        "|sipari[şs]im|kargoya\\s*ver[a-zçğıöşü]*|haz[ıi]rlan[a-zçğıöşü]*|iptal[a-zçğıöşü]*" +
+        "|teslim\\s*edil[a-zçğıöşü]*|iade[a-zçğıöşü]*|para[a-zçğıöşü]*\\s*geri|geri\\s*[öo]deme[a-zçğıöşü]*|gelmedi",
     ),
   },
   {
     intent: "SHIPPING",
-    pattern: word("kargo|kargoya|teslimat|teslim|kaç\\s*g[üu]nde|g[üu]n\\s*i[çc]inde|g[öo]nderim|paket"),
+    pattern: word(
+      "kargo[a-zçğıöşü]*|teslimat[a-zçğıöşü]*|teslim[a-zçğıöşü]*|ka[çc]\\s*g[üu]nde" +
+        "|g[üu]n\\s*i[çc]inde|g[öo]nderim[a-zçğıöşü]*|paket[a-zçğıöşü]*",
+    ),
   },
   {
     intent: "CUSTOM_SIZE",
     pattern: word(
-      "özel\\s*öl[çc]ü|ozel\\s*olcu|kesim|keser|kesmeniz|kesil|kestir|öl[çc]ü|olcu|santim|santimetre|\\d{2,4}\\s*[x×]\\s*\\d{2,4}|\\d+\\s*metre|metreye|en\\s*\\d+|boy\\s*\\d+",
+      "[öo]zel\\s*[öo]l[çc][a-zçğıöşü]*|kesim[a-zçğıöşü]*|keser[a-zçğıöşü]*|kesmeniz|kesil[a-zçğıöşü]*" +
+        "|kestir[a-zçğıöşü]*|[öo]l[çc][a-zçğıöşü]*|santim[a-zçğıöşü]*|santimetre[a-zçğıöşü]*|metre[a-zçğıöşü]*" +
+        `|${NUM}${SEP}${NUM}|${NUM}\\s*(en|boy)|${NUM}\\s*ye\\s*${NUM}|hangisini\\s*se[çc]` +
+        "|(bir|iki|üç|dört|beş|altı|yedi|sekiz|dokuz|on|yarım|bucuk|buçuk)\\s*metre[a-zçğıöşü]*",
     ),
   },
   {
     intent: "SEWING",
     pattern: word(
-      "dikim|dikiyor|dikiyor\\s*musunuz|diker|dikilecek|pile|pilesiz|pili|b[üu]zg[üu]|ekstrafor|d[üu]ğme|dugme|kurdele|ba[ğg]lama|aksesuar|file|astar",
+      "dikim[a-zçğıöşü]*|dikiyor[a-zçğıöşü]*|diker[a-zçğıöşü]*|dikilecek|dikilir|pile[a-zçğıöşü]*" +
+        "|b[üu]zg[üu][a-zçğıöşü]*|ekstrafor[a-zçğıöşü]*|d[üu]ğme[a-zçğıöşü]*|kurdele[a-zçğıöşü]*" +
+        "|ba[ğg]lama[a-zçğıöşü]*|aksesuar[a-zçğıöşü]*|file[a-zçğıöşü]*|astar[a-zçğıöşü]*",
     ),
   },
-  { intent: "CARE", pattern: word("yıka|yika|y[ıi]kama|ütü|utu|leke|temizle|çekme|cekme|solma|makinede") },
-  { intent: "MOUNT", pattern: word("montaj|kurulum|takma|takıl|korni[şs]|kanca|çengel|cengel|pim|bant|rulo|ray") },
+  {
+    intent: "CARE",
+    pattern: word("y[ıi]ka[a-zçğıöşü]*|[üu]t[üu][a-zçğıöşü]*|leke[a-zçğıöşü]*|temizle[a-zçğıöşü]*|makinede"),
+  },
+  {
+    intent: "MOUNT",
+    pattern: word(
+      "montaj[a-zçğıöşü]*|kurulum[a-zçğıöşü]*|takma[a-zçğıöşü]*|tak[ıi]l[a-zçğıöşü]*|korni[şs][a-zçğıöşü]*" +
+        "|kanca[a-zçğıöşü]*|[çc]engel[a-zçğıöşü]*|pim[a-zçğıöşü]*|bant[a-zçğıöşü]*|rulo[a-zçğıöşü]*" +
+        "|ray[a-zçğıöşü]*|ku[şs]g[öo]z[a-zçğıöşü]*|rustik",
+    ),
+  },
   {
     intent: "FABRIC",
     pattern: word(
-      "kuma[şs]|kumas|t[üu]l|keten|kadife|[şs][öo]nil|bambu|karartma|blackout|[şs]effaf|dokuma|gramaj|desen|polyester|pamuk|viskon|renk|bej|pudra|mint|antrasit|krem|siyah|beyaz|gri",
+      "kuma[şs][a-zçğıöşü]*|t[üu]l[a-zçğıöşü]*|keten[a-zçğıöşü]*|kadife[a-zçğıöşü]*|[şs][öo]nil[a-zçğıöşü]*" +
+        "|bambu[a-zçğıöşü]*|karartma[a-zçğıöşü]*|blackout[a-zçğıöşü]*|[şs]effaf[a-zçğıöşü]*" +
+        "|dokuma[a-zçğıöşü]*|gramaj[a-zçğıöşü]*|desen[a-zçğıöşü]*|polyester[a-zçğıöşü]*|pamuk[a-zçğıöşü]*" +
+        "|viskon[a-zçğıöşü]*|renk[a-zçğıöşü]*|bej|pudra|mint|antrasit|krem|siyah|beyaz|gri",
     ),
   },
 ];
@@ -99,9 +131,19 @@ export function detectIntents(text: string): { primary: Intent; all: Intent[] } 
     if (rule.pattern.test(text) && !found.includes(rule.intent)) found.push(rule.intent);
   }
 
-  // Ölçü/dikim sorusu sipariş numarası içeriyorsa bu bir sipariş sonrası değişikliktir.
-  if (found.includes("ORDER_STATUS") && /öl[çc][üu]|\d{2,4}\s*[x×]\s*\d{2,4}/i.test(text) && !found.includes("ORDER_CHANGE")) {
+  const hasLongOrderNumber = /\d{9,12}/.test(text);
+  const hasChangeVerb = /de[ğg]i[şs]|olsun|yap(m|abil|ar)|haz[ıi]rla(m|yabil)|d[üu]zelt|g[üu]ncelle/i.test(text);
+  const hasMeasureSignal = /[öo]l[çc]|\d{2,4}\s*[x×/]\s*\d{2,4}|\bboy\b|\ben\b|cm/i.test(text);
+
+  // Sipariş kimliği + değişiklik fiili + ölçü sinyali → sipariş sonrası ölçü değişikliği.
+  if ((hasLongOrderNumber || /sipari[şs]/i.test(text)) && hasChangeVerb && hasMeasureSignal && !found.includes("ORDER_CHANGE")) {
     found.unshift("ORDER_CHANGE");
+  }
+
+  // Ölçü sorusu sipariş numarası içermiyorsa ölçü niyeti sipariş durumundan önce gelir.
+  if (!hasLongOrderNumber && found.includes("CUSTOM_SIZE") && found[0] === "ORDER_STATUS") {
+    found.splice(found.indexOf("CUSTOM_SIZE"), 1);
+    found.unshift("CUSTOM_SIZE");
   }
 
   const primary = found[0] ?? "OTHER";
@@ -143,7 +185,7 @@ export const INTENT_POLICIES: Record<Intent, string[]> = {
 /** Ürün bilgisi kartından cevaplanabilecek niyetler. */
 export const PRODUCT_INTENTS: Intent[] = ["CUSTOM_SIZE", "SEWING", "FABRIC", "CARE", "MOUNT"];
 
-/** Canlı veri (fiyat, sipariş durumu) gerektirdiği için asla otomatik kesin cevap verilmeyen niyetler. */
+/** Canlı veri (fiyat, sipariş durumu) gerektirdiği için otomatik kesin cevap verilmeyen niyetler. */
 export const HUMAN_REVIEW_INTENTS: Intent[] = ["PRICE", "ORDER_STATUS", "ORDER_CHANGE", "SHIPPING"];
 
 export type AnswerStrategy = "DIRECT" | "PARTIAL" | "ASK_DETAIL" | "HUMAN_REVIEW";
@@ -157,8 +199,8 @@ export const STRATEGY_LABELS: Record<AnswerStrategy, string> = {
 
 /**
  * Cevap stratejisini belirler.
- * - Hiç kaynak yok → ASK_DETAIL (müşteriden eksik ayrıntı istenir, insan incelemesi işaretlenir).
- * - Tüm zorunlu alanlar doğrulanmış → DIRECT.
+ * - Kaynak yok → ASK_DETAIL (müşteriden eksik ayrıntı istenir).
+ * - Tüm zorunlu alanlar/politikalar doğrulanmış → DIRECT.
  * - Bir kısmı doğrulanmış → PARTIAL.
  * - Canlı veri gerektiren niyet → en az HUMAN_REVIEW.
  */
