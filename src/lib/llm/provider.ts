@@ -126,7 +126,9 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
   const promptVersion = options.promptVersion ?? PROMPT_VERSION;
   const endpoint = `${normalizeBaseUrl(options.baseUrl)}/chat/completions`;
 
-  async function attempt(messages: LlmMessage): Promise<{ text: string; model: string; usage: LlmUsageInfo }> {
+  async function attempt(
+    messages: LlmMessage,
+  ): Promise<{ text: string; model: string; usage: LlmUsageInfo; status: number }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 
@@ -184,7 +186,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
       }
 
       const usage = parseUsage(payload) ?? estimateUsage(messages.system, messages.user, text);
-      return { text, model: payload.model ?? options.model, usage };
+      return { text, model: payload.model ?? options.model, usage, status: response.status };
     } catch (error) {
       if (error instanceof LlmRequestError) throw error;
 
@@ -225,6 +227,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
             promptVersion,
             durationMs: Date.now() - startedAt,
             usage: result.usage,
+            httpStatus: result.status,
           };
         } catch (error) {
           if (!(error instanceof LlmRequestError)) throw error;
@@ -264,6 +267,7 @@ export function createMockProvider(
         promptVersion: PROMPT_VERSION,
         durationMs: Date.now() - startedAt,
         usage: estimateUsage(messages.system, messages.user, text),
+        httpStatus: 200,
       };
     },
   };

@@ -39,6 +39,8 @@ export interface LlmCompletion {
   durationMs: number;
   /** Sağlayıcının verdiği ya da tahmin edilen token kullanımı */
   usage: LlmUsageInfo;
+  /** HTTP durum kodu (başarılı çağrıda 200) */
+  httpStatus?: number;
 }
 
 export interface LlmProvider {

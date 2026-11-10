@@ -93,6 +93,7 @@ try {
 
   console.log("\n— Sonuç —");
   console.log(`durum          : BAŞARILI`);
+  console.log(`http durumu    : ${completion.httpStatus ?? "?"}`);
   console.log(`model (yanıt)  : ${completion.model}`);
   console.log(`süre           : ${completion.durationMs} ms (toplam ${Date.now() - startedAt} ms)`);
   console.log(`token          : girdi ${completion.usage.inputTokens} · çıktı ${completion.usage.outputTokens} · toplam ${completion.usage.totalTokens}${completion.usage.estimated ? " (tahmini)" : " (sağlayıcıdan)"}`);
