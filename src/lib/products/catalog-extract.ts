@@ -186,17 +186,25 @@ export function extractFromCatalog(input: {
   items: CatalogProductDto[];
   description?: string | null;
   truncated?: boolean;
+  /** Kategori adı: "Tül Perde" gibi değerler materyal sayılmaz. */
+  categoryName?: string | null;
 }): CatalogCandidate[] {
   const candidates: CatalogCandidate[] = [];
   const stats = collectAttributeStats(input.items);
 
   for (const stat of stats) {
     const entries = [...stat.values.entries()].sort((a, b) => b[1] - a[1]);
-    const top = entries.find(([value]) => isMeaningfulValue(value));
+    const categoryFold = input.categoryName ? fold(input.categoryName) : null;
+    const isCategoryLike = (value: string) => {
+      const folded = fold(value);
+      return Boolean(categoryFold) && (folded === categoryFold || /perde$/.test(folded) || folded.startsWith("perde"));
+    };
+
+    const top = entries.find(([value]) => isMeaningfulValue(value) && !isCategoryLike(value));
     if (!top) continue;
     const [topValue, topCount] = top;
 
-    const meaningful = entries.filter(([value]) => isMeaningfulValue(value));
+    const meaningful = entries.filter(([value]) => isMeaningfulValue(value) && !isCategoryLike(value));
     const meaningfulTotal = meaningful.reduce((sum, [, count]) => sum + count, 0);
     const share = meaningfulTotal > 0 ? topCount / meaningfulTotal : 0;
     const alternatives = meaningful.filter(([value]) => value !== topValue).map(([value]) => value);

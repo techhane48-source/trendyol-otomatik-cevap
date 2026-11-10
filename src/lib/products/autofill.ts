@@ -117,6 +117,7 @@ export async function buildAutoFillPlan(
       items,
       description: row.description,
       truncated: row.truncated,
+      categoryName: row.categoryName,
     });
 
     const card = cardByMain.get(row.productMainId);
