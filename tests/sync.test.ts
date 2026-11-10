@@ -1,10 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { disconnectPrisma, getPrisma } from "@/lib/prisma";
-import { TrendyolApiError, TrendyolQnaClient, type TrendyolClientConfig } from "@/lib/trendyol/client";
+import { TrendyolApiError, TrendyolQnaClient, type QuestionsQuery, type TrendyolClientConfig } from "@/lib/trendyol/client";
 import {
+  GENERIC_ERROR_MESSAGE,
   InvalidDateRangeError,
+  UnsupportedQuestionStatusError,
+  describeError,
   isLastPage,
+  sanitizeMessage,
   syncQuestions,
   validateDateRange,
 } from "@/lib/trendyol/sync";
@@ -47,7 +51,7 @@ function pageResult(
 
 /** Gerçek istemci yerine sıralı sayfa döndüren sahte istemci. */
 function stubClient(
-  handler: (query: { page?: number }) => QuestionsPageResult | Promise<QuestionsPageResult>,
+  handler: (query: QuestionsQuery) => QuestionsPageResult | Promise<QuestionsPageResult>,
 ): ClientType {
   return { fetchQuestionsPage: handler } as unknown as ClientType;
 }
@@ -224,7 +228,7 @@ describe("senkronizasyon — sayfalama ve upsert", () => {
     expect(rows[1].rawStatus).toBe("YENI_BIR_DURUM");
   });
 
-  it("maxPages sınırına ulaşınca durur", async () => {
+  it("maxPages sınırına ulaşınca durur ve eksik senkronizasyonu PARTIAL olarak bildirir", async () => {
     let calls = 0;
     const result = await syncQuestions(
       { pageSize: 1, maxPages: 2 },
@@ -240,6 +244,53 @@ describe("senkronizasyon — sayfalama ve upsert", () => {
     expect(calls).toBe(2);
     expect(result.pagesFetched).toBe(2);
     expect(result.savedCount).toBe(2);
+
+    // Sayfalar tamamlanmadı: SUCCESS değil PARTIAL
+    expect(result.status).toBe("PARTIAL");
+    expect(result.complete).toBe(false);
+    expect(result.stopReason).toBe("PAGE_LIMIT");
+    expect(result.errorCode).toBe("PAGE_LIMIT");
+    expect(result.incompleteReason).toContain("maxPages=2");
+
+    const run = await prisma.syncRun.findUniqueOrThrow({ where: { id: result.syncRunId } });
+    expect(run.status).toBe("PARTIAL");
+    expect(run.errorCode).toBe("PAGE_LIMIT");
+    expect(run.finishedAt).not.toBeNull();
+  });
+
+  it("son sayfaya gerçekten ulaşıldığında SUCCESS korunur", async () => {
+    const result = await syncQuestions(
+      { pageSize: 2, maxPages: 10 },
+      {
+        prisma,
+        client: stubClient((query) => {
+          const page = query.page ?? 0;
+          if (page === 0) {
+            return pageResult([questionItem(1), questionItem(2)], { last: false, totalPages: 2 });
+          }
+          return pageResult([questionItem(3)], { last: true, totalPages: 2 });
+        }),
+      },
+    );
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.complete).toBe(true);
+    expect(result.stopReason).toBe("COMPLETED");
+    expect(result.errorCode).toBeNull();
+    expect(result.incompleteReason).toBeNull();
+
+    const run = await prisma.syncRun.findUniqueOrThrow({ where: { id: result.syncRunId } });
+    expect(run.status).toBe("SUCCESS");
+    expect(run.errorCode).toBeNull();
+    expect(run.errorMessage).toBeNull();
+  });
+
+  it("desteklenmeyen durum filtresi reddedilir ve SyncRun oluşturulmaz", async () => {
+    await expect(
+      syncQuestions({ status: "BILINMEYEN" }, { prisma, client: stubClient(() => pageResult([])) }),
+    ).rejects.toThrow(UnsupportedQuestionStatusError);
+
+    expect(await prisma.syncRun.count()).toBe(0);
   });
 });
 
@@ -315,6 +366,144 @@ describe("senkronizasyon — hata yönetimi", () => {
     expect(serialized).not.toContain("test-api-key");
     expect(serialized).not.toContain("test-api-secret");
     expect(serialized).not.toContain("Basic ");
+  });
+});
+
+describe("durum mutabakatı (sonradan cevaplanan sorular)", () => {
+  it("cevaplanan sorunun yerel durumunu günceller", async () => {
+    // 1. geçiş: iki soru bekliyor
+    await syncQuestions(
+      { statuses: ["WAITING_FOR_ANSWER"], pageSize: 5 },
+      {
+        prisma,
+        client: stubClient((query) => {
+          if (query.status === "WAITING_FOR_ANSWER") {
+            return pageResult(
+              [questionItem(1), questionItem(2, { status: "WAITING_FOR_ANSWER" })],
+              { last: true },
+            );
+          }
+          return pageResult([], { last: true });
+        }),
+      },
+    );
+
+    const before = await prisma.question.findFirstOrThrow({
+      where: { trendyolQuestionId: 1n },
+    });
+    expect(before.status).toBe("WAITING_FOR_ANSWER");
+    expect(before.answerText).toBeNull();
+
+    // 2. geçiş: 1 numaralı soru artık cevaplanmış
+    const result = await syncQuestions(
+      { statuses: ["WAITING_FOR_ANSWER", "ANSWERED"], pageSize: 5 },
+      {
+        prisma,
+        client: stubClient((query) => {
+          if (query.status === "WAITING_FOR_ANSWER") {
+            return pageResult([questionItem(2, { status: "WAITING_FOR_ANSWER" })], { last: true });
+          }
+          return pageResult(
+            [
+              questionItem(1, {
+                status: "ANSWERED",
+                answeredDate: 1_700_100_000_000,
+                answer: { id: 1, text: "Ölçüler açıklamada", creationDate: 1_700_100_000_000 },
+              }),
+            ],
+            { last: true },
+          );
+        }),
+      },
+    );
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.statuses).toEqual(["WAITING_FOR_ANSWER", "ANSWERED"]);
+    expect(result.breakdown).toHaveLength(2);
+
+    const after = await prisma.question.findFirstOrThrow({ where: { trendyolQuestionId: 1n } });
+    expect(after.status).toBe("ANSWERED");
+    expect(after.rawStatus).toBe("ANSWERED");
+    expect(after.answerText).toBe("Ölçüler açıklamada");
+    expect(after.answeredAt).not.toBeNull();
+
+    // Kopya oluşmadı
+    expect(await prisma.question.count()).toBe(2);
+  });
+
+  it("ilk durumda sayfa sınırına takılırsa kalan durumlar taranmaz ve PARTIAL döner", async () => {
+    const seen: string[] = [];
+    const result = await syncQuestions(
+      { statuses: ["WAITING_FOR_ANSWER", "ANSWERED"], pageSize: 1, maxPages: 1 },
+      {
+        prisma,
+        client: stubClient((query) => {
+          seen.push(query.status ?? "?");
+          return pageResult([questionItem(1)], { last: false, totalPages: 9 });
+        }),
+      },
+    );
+
+    expect(seen).toEqual(["WAITING_FOR_ANSWER"]);
+    expect(result.status).toBe("PARTIAL");
+    expect(result.complete).toBe(false);
+    expect(result.stopReason).toBe("PAGE_LIMIT");
+    expect(result.incompleteReason).toContain("WAITING_FOR_ANSWER");
+    expect(result.breakdown).toHaveLength(1);
+    expect(result.statuses).toEqual(["WAITING_FOR_ANSWER", "ANSWERED"]);
+  });
+});
+
+describe("hata mesajı güvenliği", () => {
+  it("iç hata mesajı dışarıya verilmez (bağlantı adresi sızabilir)", () => {
+    const internal = new Error(
+      "connect failed postgresql://postgres:supersecret@127.0.0.1:5432/trendyol_dev",
+    );
+    const described = describeError(internal);
+
+    expect(described.errorCode).toBe("INTERNAL_ERROR");
+    expect(described.errorMessage).toBe(GENERIC_ERROR_MESSAGE);
+    expect(described.errorMessage).not.toContain("supersecret");
+    expect(described.errorMessage).not.toContain("postgresql://");
+  });
+
+  it("bilinmeyen değerler için de sabit mesaj döner", () => {
+    expect(describeError("bir metin")).toEqual({
+      errorCode: "UNKNOWN_ERROR",
+      errorMessage: GENERIC_ERROR_MESSAGE,
+    });
+    expect(describeError(undefined).errorMessage).toBe(GENERIC_ERROR_MESSAGE);
+  });
+
+  it("sanitizeMessage bağlantı adresi ve kimlik bilgilerini maskeler", () => {
+    const raw =
+      "hata: postgresql://user:pass@host:5432/db?schema=public Authorization: Basic abc123def456 password=hunter2";
+    const safe = sanitizeMessage(raw);
+
+    expect(safe).not.toContain("user:pass");
+    expect(safe).not.toContain("abc123def456");
+    expect(safe).not.toContain("hunter2");
+    expect(safe).toContain("postgresql://***");
+  });
+
+  it("Prisma benzeri hata senkronizasyon kaydına sızmaz", async () => {
+    const result = await syncQuestions(
+      {},
+      {
+        prisma,
+        client: stubClient(() => {
+          throw new Error("prisma: postgresql://postgres:gizli-sifre@host:5432/db bağlantı hatası");
+        }),
+      },
+    );
+
+    expect(result.status).toBe("FAILED");
+    expect(result.errorCode).toBe("INTERNAL_ERROR");
+    expect(JSON.stringify(result)).not.toContain("gizli-sifre");
+
+    const run = await prisma.syncRun.findUniqueOrThrow({ where: { id: result.syncRunId } });
+    expect(JSON.stringify(run)).not.toContain("gizli-sifre");
+    expect(run.errorMessage).toBe(GENERIC_ERROR_MESSAGE);
   });
 });
 

@@ -74,6 +74,13 @@ varsa uygulama **alan adı ile** birlikte hata verir, hiçbir gizli değer ekran
 | `SYNC_MAX_RETRIES` | — | Varsayılan `3` |
 | `SYNC_RETRY_BASE_MS` | — | Varsayılan `500` (üstel geri çekilme tabanı) |
 | `TRENDYOL_TIMEOUT_MS` | — | Varsayılan `15000` |
+| `APP_ACCESS_TOKEN` | Prod'ta ✅ | Paylaşılan erişim anahtarı (en az 16 karakter) |
+
+> **Erişim kapısı:** `APP_ACCESS_TOKEN` tanımlıysa `/api/questions`, `/api/sync` ve `/questions`
+> Bearer başlığı ya da `ty_access` çerezi ister. Tanımlı değilse **geliştirmede erişim açıktır**,
+> **üretimde (`NODE_ENV=production`) erişim tamamen kapanır (503, fail-closed)** — anahtarsız üretim
+> dağıtımı mümkün değildir. Çok kullanıcılı kimlik doğrulama bu fazın kapsamı dışındadır; ayrıntılı
+> mimari öneri README sonundaki "Güvenlik" bölümündedir.
 
 ## Çalıştırma
 
@@ -126,6 +133,17 @@ curl -X POST http://localhost:3000/api/sync
 
 - Sayfalar `page=0`'dan başlar; `last=true`, boş sayfa, kısa sayfa veya `totalPages` sınırında durur.
 - Güvenlik sınırı: `SYNC_MAX_PAGES`.
+- **Sayfa sınırı nedeniyle erken durulursa senkronizasyon `SUCCESS` sayılmaz:** `status: "PARTIAL"`,
+  `complete: false`, `stopReason: "PAGE_LIMIT"` ve `incompleteReason` döner; `SyncRun` kaydına da
+  `errorCode: "PAGE_LIMIT"` yazılır. Son sayfaya gerçekten ulaşıldığında davranış `SUCCESS`
+  (`complete: true`, `stopReason: "COMPLETED"`) olarak korunur.
+- `status` filtresi yalnızca desteklenen Trendyol durumlarıyla sınırlıdır:
+  `WAITING_FOR_ANSWER`, `ANSWERED`, `REJECTED`.
+- **Durum mutabakatı:** `statuses` (veya tek `status`) ile birden fazla durum sırayla taranır.
+  `/api/sync` gövdesinde `status`/`statuses` verilmezse varsayılan `["WAITING_FOR_ANSWER", "ANSWERED"]`
+  olur; böylece daha önce yerelde `WAITING_FOR_ANSWER` kalmış bir soru Trendyol'da cevaplandıysa
+  ikinci geçişte `ANSWERED` olarak güncellenir (`answerText`, `answeredAt` dahil).
+  Bir durumda sayfa sınırına takılırsa kalan durumlar taranmaz ve sonuç `PARTIAL` olur.
 - Tarih filtresi verilirse aralık **en fazla 14 gün** olabilir (`InvalidDateRangeError`).
 - Her soru `storeId + trendyolQuestionId` anahtarıyla `upsert` edilir → tekrar çekimde kopya yok.
 - Her çalıştırma için `SyncRun` kaydı: başlangıçta `RUNNING`, sonunda `SUCCESS` / `PARTIAL`
@@ -158,7 +176,10 @@ başlatır ve migration'ları uygular. Kapsam:
 - API yanıt şeması, tarih dönüşümleri, durum eşlemesi,
 - Basic Auth / User-Agent başlıkları, sorgu parametreleri,
 - 401/403/429/5xx/zaman aşımı davranışları ve tekrar sayıları,
-- sayfalama bitiş koşulları, `maxPages` sınırı,
+- sayfalama bitiş koşulları, `maxPages` sınırı ve **sayfa sınırında PARTIAL/`complete:false`** davranışı,
+- `POST /api/sync` gövde doğrulaması: geçersiz JSON → 400, desteklenmeyen `status` → 400,
+  tarih aralığı hataları → 400 (senkronizasyon başlatılmadan),
+- erişim kapısı: anahtarsız/yanlış anahtar 401, üretimde anahtarsız 503, doğru anahtar kabul,
 - upsert ile kopya oluşmaması, güncelleme tazeliği,
 - `SyncRun` başarı/`PARTIAL`/`FAILED` kayıtları,
 - HTTP katmanından veritabanına uçtan uca akış.
@@ -186,16 +207,52 @@ src/
 scripts/
   dev-postgres.ts          Gömülü PostgreSQL (geliştirme)
   mock-trendyol.ts         Sahte Trendyol API'si (geliştirme)
+  live-check.ts            Gerçek API'ye tek salt okunur istek + şema doğrulaması (npm run live:check)
 tests/                     Vitest testleri + global setup
 ```
 
 ## Güvenlik
 
 - `.env` Git'e eklenmez (`.gitignore`).
-- API anahtarları, Basic Auth başlığı, müşteri verisi loglanmaz; logger hassas anahtarları ve
-  `Basic ...`/`Bearer ...` kalıplarını maskeler.
-- Hata mesajları yalnızca HTTP kodu / hata sınıfı içerir.
+- API anahtarları, Basic Auth başlığı, müşteri verisi loglanmaz; logger hassas anahtarları,
+  `Basic ...`/`Bearer ...` kalıplarını ve **bağlantı adreslerini** (`postgresql://…`) maskeler.
+- Bilinmeyen iç hataların (Prisma/pg dahil) mesajı dışarıya **verilmez**: `describeError()` sabit bir
+  metin + `INTERNAL_ERROR` kodu döndürür, ayrıntı yalnızca sunucu loguna yazılır. Böylece veritabanı
+  bağlantı adresi (parola) veya müşteri verisi API yanıtına / `SyncRun` kaydına sızmaz.
 - Üretim API'sine sadece soru **okuma** isteği gider.
+
+### Erişim kontrolü (Faz 1.2)
+
+| Uç nokta | Koruma |
+| --- | --- |
+| `/api/health` | Açık (müşteri verisi yok, yalnızca durum) |
+| `/api/questions`, `/api/sync` | `APP_ACCESS_TOKEN` (Bearer veya `ty_access` çerezi) |
+| `/questions` | Aynı anahtar; form ile httpOnly çerez verilir, "Oturumu kapat" çerezi siler |
+
+- Anahtar karşılaştırması `crypto.timingSafeEqual` ile sabit zamanlıdır.
+- Anahtar sorgu parametresiyle **kabul edilmez** (URL'ler loglara düşer).
+- Üretimde anahtar yoksa istekler `503` ile reddedilir; geliştirmede açık bırakılır.
+
+### Çok kullanıcılı kimlik doğrulama — mimari karar ve plan (yapılmadı)
+
+Bu fazda bilinçli olarak kullanıcı tablosu/oturum yönetimi **eklenmedi**; paylaşılan tek anahtar,
+tek satıcılı bir kurulumda müşteri verisini korumak için yeterlidir. Gerçek SaaS'a geçerken önerilen
+sıra:
+
+1. **Kimlik sağlayıcı**: Auth.js (NextAuth) v5 + Credentials yerine e-posta/parola için `argon2`
+   hash'li `User` modeli, ya da kurumsal müşteri için OIDC/SAML sağlayıcısı.
+2. **Veri modeli**: `User`, `Membership(userId, storeId, role)` — her `Question`/`SyncRun` zaten
+   `storeId` taşıdığı için çok kiracılı ayrım sorgu katmanında `storeId IN (...)` ile uygulanır.
+3. **Yetkilendirme**: tüm API rotaları `requireStoreAccess(request, storeId)` yardımcısından geçer;
+   varsayılan reddet (allow-list). `role`: `owner` / `viewer`.
+4. **Oturum**: httpOnly + `Secure` + `SameSite=Lax` çerez, rotasyonlu oturum kimliği, CSRF token'ı
+   mutasyon uç noktalarında.
+5. **Denetim**: `AuditLog(userId, action, storeId, createdAt)` — soru metni/kimlik bilgisi kaydedilmez.
+6. **Geçiş**: paylaşılan anahtar kaldırılmadan önce iki mod birlikte çalıştırılır (feature flag),
+   ardından anahtar devre dışı bırakılır; mevcut tek satıcı ilk `owner` olarak taşınır.
+
+O zamana kadar: `APP_ACCESS_TOKEN` üretimde zorunludur, paneli yalnızca sunucu içinden erişilebilir
+bir ağ/VPN arkasında tutmak ek savunma katmanı olarak önerilir.
 
 ## Bilinen sınırlar (Faz 1)
 

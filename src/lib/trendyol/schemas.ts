@@ -46,7 +46,9 @@ export type TrendyolQuestionRaw = z.infer<typeof trendyolQuestionSchema>;
 
 /** Spring Page sarmalayıcısı. */
 export const trendyolQnaPageSchema = z.looseObject({
-  content: z.array(z.unknown()).default([]),
+  // `content` ZORUNLUDUR: eksik veya yanlış türde olması sessizce "boş sayfa"
+  // olarak yorumlanmaz, doğrulama hatası üretir.
+  content: z.array(z.unknown()),
   totalPages: z.number().int().nonnegative().nullish(),
   totalElements: z.number().int().nonnegative().nullish(),
   number: z.number().int().nonnegative().nullish(),

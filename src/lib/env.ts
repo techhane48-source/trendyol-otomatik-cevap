@@ -33,6 +33,17 @@ const envSchema = z.object({
   // HTTP
   TRENDYOL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
 
+  /**
+   * Panel/API erişim anahtarı (paylaşılan tek anahtar).
+   * Tanımlanmazsa: geliştirmede erişim açık, üretimde erişim TAMAMEN KAPALI (fail-closed).
+   * Zorunluluk burada değil `src/lib/auth.ts` içinde uygulanır; böylece `next build`
+   * anahtar olmadan da çalışabilir.
+   */
+  APP_ACCESS_TOKEN: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().trim().min(16, "en az 16 karakter olmalı").optional(),
+  ),
+
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 

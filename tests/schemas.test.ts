@@ -38,14 +38,45 @@ describe("Trendyol yanıt şeması", () => {
     expect(questions[0].askedAt?.toISOString()).toBe(new Date(1_700_000_000_000).toISOString());
   });
 
-  it("content alanı yoksa boş liste kabul edilir (esnek doğrulama)", () => {
-    const { questions, page } = parseQuestionsPage({ totalPages: 0 });
+  it("content alanı yoksa sessizce boş sayfa kabul edilmez", () => {
+    expect(() => parseQuestionsPage({ totalPages: 0 })).toThrow(TrendyolResponseValidationError);
+  });
+
+  it("content yanlış türdeyse doğrulama hatası verir", () => {
+    expect(() => parseQuestionsPage({ content: "bozuk" })).toThrow(TrendyolResponseValidationError);
+    expect(() => parseQuestionsPage({ content: { a: 1 } })).toThrow(
+      TrendyolResponseValidationError,
+    );
+    expect(() => parseQuestionsPage(null)).toThrow(TrendyolResponseValidationError);
+  });
+
+  it("boş content dizisi geçerli sayfadır (gerçekten soru yok)", () => {
+    const { page, questions } = parseQuestionsPage({ content: [], last: true, totalElements: 0 });
     expect(page.content).toEqual([]);
     expect(questions).toEqual([]);
   });
 
-  it("content dizi değilse doğrulama hatası verir", () => {
-    expect(() => parseQuestionsPage({ content: "bozuk" })).toThrow(TrendyolResponseValidationError);
+  it("doğrulama hatası soru metnini veya müşteri bilgisini içermez", () => {
+    let caught: unknown;
+    try {
+      parseQuestionsPage({
+        content: [
+          {
+            id: "x",
+            text: "MÜŞTERİ GİZLİ SORUSU",
+            customerId: "999999",
+            status: "WAITING_FOR_ANSWER",
+          },
+        ],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TrendyolResponseValidationError);
+    const message = (caught as Error).message;
+    expect(message).not.toContain("MÜŞTERİ GİZLİ SORUSU");
+    expect(message).not.toContain("999999");
   });
 
   it("dokümanda olmayan ek alanlar korunur", () => {

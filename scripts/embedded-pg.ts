@@ -1,7 +1,32 @@
 import EmbeddedPostgres from "embedded-postgres";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+
+let psScriptCounter = 0;
+
+/**
+ * PowerShell komutunu geçici bir `.ps1` dosyası üzerinden çalıştırır.
+ * `-Command "..."` biçiminde iç içe tırnaklar Windows'ta bozulduğu için dosya yolu tercih edilir.
+ */
+function runPowerShell(script: string): void {
+  if (process.platform !== "win32") return;
+
+  const file = path.join(os.tmpdir(), `trendyol-pg-${process.pid}-${psScriptCounter++}.ps1`);
+  try {
+    fs.writeFileSync(file, script, "utf8");
+    execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${file}"`, { stdio: "ignore" });
+  } catch {
+    // yut: temizlik en iyi çabadır
+  } finally {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      // yut
+    }
+  }
+}
 
 export interface LocalPgConfig {
   port: number;
@@ -32,7 +57,27 @@ export function connectionUrl(cfg: LocalPgConfig): string {
 }
 
 /**
- * Bu projeye ait tüm postgres.exe süreçlerini sonlandırır.
+ * Yetim kalmış postgres.exe süreçlerini sonlandırır (üst süreci artık yaşamıyorsa).
+ * Windows'ta postmaster kapansa bile `io_worker` gibi alt süreçler paylaşılan belleği
+ * tutabildiği için yeni küme "pre-existing shared memory block is still in use"
+ * hatasıyla başlamaz. Canlı bir kümenin süreçleri (üst süreç yaşıyor) KORUNUR.
+ */
+export function killOrphanPostgresProcesses(): void {
+  if (process.platform !== "win32") return;
+
+  const script = [
+    "$ErrorActionPreference='SilentlyContinue'",
+    "Get-CimInstance Win32_Process -Filter \"Name='postgres.exe'\" | ForEach-Object {",
+    "  $parentAlive = Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue",
+    "  if (-not $parentAlive) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+    "}",
+  ].join("\n");
+
+  runPowerShell(script);
+}
+
+/**
+ * Bu projeye ait postgres.exe süreçlerini (veri dizini eşleşmesiyle) sonlandırır.
  * Windows'ta postmaster kapansa bile `io_worker` gibi alt süreçler paylaşılan
  * belleği tutabildiği için yeni küme "pre-existing shared memory block is still
  * in use" hatasıyla başlamaz.
@@ -47,18 +92,12 @@ export function killProjectPostgresProcesses(dataDir: string): void {
   const condition = variants.map((value) => `$_.CommandLine -like '*${value}*'`).join(" -or ");
   const script = [
     "$ErrorActionPreference='SilentlyContinue'",
-    `Get-CimInstance Win32_Process -Filter "Name='postgres.exe'"`,
-    `| Where-Object { ${condition} }`,
-    `| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`,
-  ].join(" ");
+    "Get-CimInstance Win32_Process -Filter \"Name='postgres.exe'\" |",
+    `Where-Object { ${condition} } |`,
+    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+  ].join("\n");
 
-  try {
-    execSync(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, {
-      stdio: "ignore",
-    });
-  } catch {
-    // yut
-  }
+  runPowerShell(script);
 }
 
 /** Verilen portu dinleyen süreçleri sonlandırır (test/geliştirme portları bu projeye aittir). */
@@ -105,6 +144,7 @@ export async function startEmbeddedPostgres(
   });
 
   // Önceki çalıştırmadan kalan postgres süreçlerini temizle.
+  killOrphanPostgresProcesses();
   killProjectPostgresProcesses(cfg.databaseDir);
   killListenersOnPort(cfg.port);
   const pidFile = path.join(cfg.databaseDir, "postmaster.pid");
@@ -169,4 +209,5 @@ export async function stopEmbeddedPostgres(
   // Portu hâlâ dinleyen bir süreç kaldıysa zorla sonlandır.
   killListenersOnPort(cfg.port);
   killProjectPostgresProcesses(cfg.databaseDir);
+  killOrphanPostgresProcesses();
 }

@@ -1,5 +1,9 @@
+import { cookies } from "next/headers";
+
+import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
+import { signInAction, signOutAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +40,80 @@ function statusClass(status: string): string {
   return "badge";
 }
 
-export default async function QuestionsPage() {
+/**
+ * Erişim kapısı ekranı. Çok kullanıcılı kimlik doğrulama değildir: paylaşılan
+ * tek erişim anahtarı (`APP_ACCESS_TOKEN`) ile korunan basit bir giriş formu.
+ */
+function AccessGate({ error, status }: { error: string; status: number }) {
+  const misconfigured = status === 503;
+
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0, fontSize: 18 }}>Erişim gerekli</h2>
+      <p className="muted" style={{ marginTop: 0 }}>
+        {error}
+      </p>
+      {misconfigured ? (
+        <p style={{ marginBottom: 0 }}>
+          Sunucuda <code>APP_ACCESS_TOKEN</code> tanımlanmalı. Tanımlanana kadar üretimde erişim
+          kapalıdır.
+        </p>
+      ) : (
+        <form action={signInAction} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="password"
+            name="token"
+            placeholder="Erişim anahtarı"
+            autoComplete="current-password"
+            required
+            style={{
+              flex: "1 1 220px",
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "var(--bg)",
+              color: "var(--text)",
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "var(--card)",
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            Giriş
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+export default async function QuestionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ hata?: string }>;
+}) {
+  const cookieStore = await cookies();
+  const access = checkAccess(cookieStore.get(ACCESS_COOKIE_NAME)?.value ?? null);
+
+  if (!access.ok) {
+    return (
+      <>
+        <h1>Sorular</h1>
+        <AccessGate error={access.error} status={access.status} />
+      </>
+    );
+  }
+
+  const params = await searchParams;
+  const loginError = params?.hata === "1";
+
   let questions: QuestionRow[] = [];
   let errorMessage: string | null = null;
 
@@ -67,6 +144,13 @@ export default async function QuestionsPage() {
       <p className="subtitle">
         Son 50 soru — yalnızca <code>GET /questions/filter</code> ile okunur, cevap gönderilmez.
       </p>
+
+      {loginError ? (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <strong>Giriş başarısız:</strong>{" "}
+          <span className="muted">erişim anahtarı geçersiz.</span>
+        </div>
+      ) : null}
 
       {errorMessage ? (
         <div className="card">
@@ -107,6 +191,23 @@ export default async function QuestionsPage() {
           </table>
         </div>
       )}
+
+      <form action={signOutAction} style={{ marginTop: 16 }}>
+        <button
+          type="submit"
+          style={{
+            padding: "6px 12px",
+            fontSize: 13,
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "transparent",
+            color: "var(--muted)",
+            cursor: "pointer",
+          }}
+        >
+          Oturumu kapat
+        </button>
+      </form>
     </>
   );
 }

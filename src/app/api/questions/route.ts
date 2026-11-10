@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { ACCESS_COOKIE_NAME, checkRequestAccess } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 
@@ -17,6 +18,15 @@ const querySchema = z.object({
 
 /** Veritabanındaki soruları sayfalı olarak listeler (salt okunur). */
 export async function GET(request: NextRequest) {
+  const access = checkRequestAccess({
+    authorization: request.headers.get("authorization"),
+    cookieToken: request.cookies?.get(ACCESS_COOKIE_NAME)?.value ?? null,
+  });
+
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
+
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
 
   if (!parsed.success) {

@@ -15,7 +15,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "pg:dev": "tsx scripts/dev-postgres.ts",
-    "mock:trendyol": "tsx scripts/mock-trendyol.ts"
+    "mock:trendyol": "tsx scripts/mock-trendyol.ts",
+    "live:check": "tsx scripts/live-check.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

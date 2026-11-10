@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getAccessMode } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 
@@ -31,6 +32,8 @@ export async function GET() {
     checks: {
       database: dbOk ? "up" : "down",
       trendyolCredentials: trendyolConfigured ? "configured" : "missing",
+      // Müşteri verisi içermez; yalnızca erişim kapısının modunu bildirir.
+      access: getAccessMode(),
     },
     ...(dbError ? { databaseError: dbError } : {}),
     latencyMs: Date.now() - startedAt,
