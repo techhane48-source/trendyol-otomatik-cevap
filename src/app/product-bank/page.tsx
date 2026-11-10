@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { FIELD_DEFS, getCardFields, getProductQuestionHints, listTopProducts } from "@/lib/products/bank";
+import { buildAutoFillPlan, summarizePlan } from "@/lib/products/autofill";
+import { approveAutoAction, autoFillAction, syncCatalogAction } from "./actions";
 import { listSuggestions } from "@/lib/products/suggestions";
 
 import {
@@ -18,6 +20,26 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const SOURCE_LABELS: Record<string, string> = {
+  MANUAL: "elle girildi",
+  CSV: "CSV",
+  SUGGESTION: "öneri",
+  CARD: "kart",
+  CATALOG_ATTRIBUTE: "KATALOG",
+  CATALOG_DESCRIPTION: "ÜRÜN AÇIKLAMASI",
+  HISTORY_ANSWER: "GEÇMİŞ SATICI CEVABI",
+};
+
+const primaryButtonStyle: React.CSSProperties = {
+  padding: "7px 12px",
+  fontSize: 12.5,
+  borderRadius: 6,
+  border: "1px solid #4F46E5",
+  background: "#4F46E5",
+  color: "#fff",
+  cursor: "pointer",
+};
+
 const OK_MESSAGES: Record<string, string> = {
   "alan-kaydedildi": "Alan kaydedildi (doğrulanmadı).",
   "alan-dogrulandi": "Alan doğrulandı. Diğer alanlar etkilenmedi.",
@@ -27,6 +49,9 @@ const OK_MESSAGES: Record<string, string> = {
   "oneri-uretildi": "Geçmiş cevaplardan öneriler üretildi.",
   "oneri-kabul": "Öneri kabul edildi; alan doğrulanmamış olarak yazıldı.",
   "oneri-reddedildi": "Öneri reddedildi.",
+  katalog: "Katalogdan ürünler çekildi (salt okunur GET).",
+  otomatik: "Kartlar taslak olarak dolduruldu — hiçbir alan doğrulanmadı.",
+  onay: "Katalog kaynaklı alanlar doğrulandı; inceleme bekleyenler korundu.",
 };
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -38,6 +63,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   "invalid-csv": "CSV geçersiz (productMainId kolonu zorunlu).",
   "no-product": "Ürün seçilmedi.",
   "beklenmeyen-hata": "Beklenmeyen bir hata oluştu.",
+  katalog: "Katalog çekilemedi. API erişimi veya kimlik bilgileri kontrol edilmeli.",
+  otomatik: "Otomatik doldurma uygulanamadı.",
 };
 
 const cellStyle: React.CSSProperties = { padding: "7px 9px", borderBottom: "1px solid var(--border)", fontSize: 12.5, verticalAlign: "top" };
@@ -55,7 +82,7 @@ const buttonStyle: React.CSSProperties = { ...inputStyle, cursor: "pointer" };
 export default async function ProductBankPage({
   searchParams,
 }: {
-  searchParams: Promise<{ main?: string; ok?: string; hata?: string; ozet?: string }>;
+  searchParams: Promise<{ main?: string; ok?: string; hata?: string; ozet?: string; durum?: string }>;
 }) {
   const cookieStore = await cookies();
   const access = checkAccess(cookieStore.get(ACCESS_COOKIE_NAME)?.value ?? null);
@@ -86,6 +113,11 @@ export default async function ProductBankPage({
     ? await getProductQuestionHints({ storeId: store.id, productMainId: params.main, perCategory: 2 }, { prisma })
     : [];
   const priority = products.slice(0, 3);
+  const plans = await buildAutoFillPlan({ storeId: store.id }, { prisma });
+  const planTotals = summarizePlan(plans);
+  const catalogCount = plans.length;
+  const onlyReview = params.durum === "inceleme";
+  const visiblePlans = onlyReview ? plans.filter((plan) => plan.reviewCount > 0) : plans;
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1250 }}>
@@ -115,6 +147,108 @@ export default async function ProductBankPage({
           {ERROR_MESSAGES[params.hata] ?? "İşlem tamamlanamadı."}
         </p>
       ) : null}
+
+      <section style={{ marginTop: 18, padding: 14, border: "1px solid var(--border)", borderRadius: 10 }}>
+        <h2 style={{ fontSize: 16, margin: "0 0 6px" }}>Otomatik ürün bilgisi</h2>
+        <p style={{ fontSize: 12, opacity: 0.72, marginTop: 0 }}>
+          1) Ürünleri Getir — Trendyol kataloğundan yalnızca okuma. 2) Bilgileri Otomatik Doldur — katalog ve geçmiş
+          cevaplardan <strong>taslak</strong>. 3) Belirsizleri İncele — çelişkili/düşük güvenli alanlar. 4) Onayla —
+          yalnızca katalog kaynaklı, inceleme istemeyen alanlar.
+        </p>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <form action={syncCatalogAction}>
+            <input type="hidden" name="storeId" value={store.id} />
+            <button type="submit" style={primaryButtonStyle}>
+              Ürünleri Getir
+            </button>
+          </form>
+          <form action={autoFillAction}>
+            <input type="hidden" name="storeId" value={store.id} />
+            <button type="submit" style={buttonStyle} disabled={catalogCount === 0}>
+              Bilgileri Otomatik Doldur
+            </button>
+          </form>
+          <a href="/product-bank?durum=inceleme" style={{ ...buttonStyle, display: "inline-block", textDecoration: "none" }}>
+            Belirsizleri İncele ({planTotals.review})
+          </a>
+        </div>
+
+        <p style={{ fontSize: 12, margin: "10px 0 0", opacity: 0.8 }}>
+          Katalogda ürün: <strong>{catalogCount}</strong> · taslak alan: <strong>{planTotals.filled}</strong> · inceleme:{" "}
+          <strong>{planTotals.review}</strong> · boş: <strong>{planTotals.missing}</strong>
+          {params.main ? (
+            <>
+              {" · "}
+              <form action={approveAutoAction} style={{ display: "inline" }}>
+                <input type="hidden" name="storeId" value={store.id} />
+                <input type="hidden" name="productMainId" value={params.main} />
+                <button type="submit" style={{ ...buttonStyle, padding: "2px 8px" }}>
+                  Bu ürünü Onayla
+                </button>
+              </form>
+            </>
+          ) : null}
+        </p>
+
+        {onlyReview ? (
+          <p style={{ fontSize: 12.5, margin: "0 0 8px", padding: "7px 10px", background: "#fff7e6", borderRadius: 6 }}>
+            Yalnızca insan incelemesi gereken ürünler gösteriliyor ({visiblePlans.length}/{catalogCount}).{" "}
+            <a href="/product-bank">Tümünü göster</a>
+          </p>
+        ) : null}
+
+        {catalogCount > 0 ? (
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 10, fontSize: 12.5 }}>
+            <thead>
+              <tr>
+                <th style={headStyle}>Ürün</th>
+                <th style={headStyle}>Varyant</th>
+                <th style={headStyle}>Taslak</th>
+                <th style={headStyle}>İnceleme</th>
+                <th style={headStyle}>Boş</th>
+                <th style={headStyle}>Durum</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visiblePlans.map((plan) => (
+                <tr key={plan.productMainId}>
+                  <td style={cellStyle}>
+                    <a href={`/product-bank?main=${encodeURIComponent(plan.productMainId)}#kart`}>
+                      {plan.title ?? plan.productMainId}
+                    </a>
+                    <div style={{ fontSize: 11, opacity: 0.6 }}>{plan.productMainId}</div>
+                  </td>
+                  <td style={cellStyle}>
+                    {plan.variants}
+                    {plan.truncated ? <span style={{ color: "#7c4a03" }}> (sınır)</span> : null}
+                  </td>
+                  <td style={cellStyle}>{plan.filledCount}</td>
+                  <td style={cellStyle}>{plan.reviewCount}</td>
+                  <td style={cellStyle}>{plan.missingCount}</td>
+                  <td style={cellStyle}>
+                    {plan.filledCount > 0 ? (
+                      <span style={{ color: "#14532d" }}>taslak dolduruldu</span>
+                    ) : plan.reviewCount > 0 ? (
+                      <span style={{ color: "#7c4a03" }}>inceleme gerekli</span>
+                    ) : (
+                      <span style={{ opacity: 0.7 }}>bilgi yok</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p style={{ fontSize: 12.5, opacity: 0.7, marginBottom: 0 }}>
+            Katalog henüz çekilmedi. "Ürünleri Getir" ile başlayın.
+          </p>
+        )}
+
+        {onlyReview && visiblePlans.length === 0 && catalogCount > 0 ? (
+          <p style={{ fontSize: 12.5, marginBottom: 0 }}>İnceleme bekleyen ürün yok.</p>
+        ) : null}
+      </section>
 
       <section style={{ marginTop: 18 }}>
         <h2 style={{ fontSize: 16, marginBottom: 6 }}>Öncelikli ürünler (ilk 3)</h2>
@@ -271,7 +405,20 @@ export default async function ProductBankPage({
                         </div>
                       </span>
                     ) : (
-                      <span style={{ color: "#7c4a03" }}>doğrulanmadı{field.source ? ` · ${field.source}` : ""}</span>
+                      <span style={{ color: "#7c4a03" }}>
+                        doğrulanmadı
+                        {field.source ? ` · ${SOURCE_LABELS[field.source] ?? field.source}` : ""}
+                        {field.confidence ? ` · güven: ${field.confidence}` : ""}
+                        {field.needsReview ? " · inceleme" : ""}
+                        {field.evidence ? (
+                          <div style={{ fontSize: 11, opacity: 0.65, maxWidth: 320 }}>{field.evidence}</div>
+                        ) : null}
+                        {field.alternatives && field.alternatives.length > 0 ? (
+                          <div style={{ fontSize: 11, color: "#7f1d1d" }}>
+                            farklı değer: {field.alternatives.join(" | ").slice(0, 80)}
+                          </div>
+                        ) : null}
+                      </span>
                     )}
                   </td>
                   <td style={cellStyle}>

@@ -8,6 +8,8 @@ import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getEnv } from "@/lib/env";
 import { BankError, bulkSetField, importCsv, setField, unverifyField, verifyField } from "@/lib/products/bank";
 import { acceptSuggestion, generateSuggestions, rejectSuggestion } from "@/lib/products/suggestions";
+import { syncCatalog } from "@/lib/products/catalog-sync";
+import { applyAutoFill, approveAutoFilled } from "@/lib/products/autofill";
 
 async function requireActor(): Promise<string> {
   const store = await cookies();
@@ -171,4 +173,48 @@ export async function rejectSuggestionAction(formData: FormData): Promise<void> 
 
   revalidatePath("/product-bank");
   redirect(failure ? `/product-bank?hata=${failure}` : "/product-bank?ok=oneri-reddedildi");
+}
+
+/* ------------------------------------------------------------------ */
+/* GÖREV 010 — katalogdan otomatik doldurma                            */
+/* ------------------------------------------------------------------ */
+
+/** "Ürünleri Getir": Trendyol kataloğundan salt okunur GET ile ürün anlık görüntüsü. */
+export async function syncCatalogAction(formData: FormData): Promise<void> {
+  await requireActor();
+  const storeId = storeIdOf(formData);
+
+  try {
+    const result = await syncCatalog({ storeId, limit: 10 });
+    const summary = `${result.synced}/${result.requested} ürün · ${result.variants} varyant · ${result.failed} hata`;
+    redirect(`/product-bank?ok=katalog&ozet=${encodeURIComponent(summary)}`);
+  } catch {
+    redirect("/product-bank?hata=katalog");
+  }
+}
+
+/** "Bilgileri Otomatik Doldur": katalog + geçmiş cevaptan TASLAK doldurur (doğrulamaz). */
+export async function autoFillAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const storeId = storeIdOf(formData);
+
+  try {
+    const result = await applyAutoFill({ storeId, actor }, {});
+    const summary = `${result.products} ürün · ${result.filled} alan taslak · ${result.review} alan incelemede`;
+    redirect(`/product-bank?ok=otomatik&ozet=${encodeURIComponent(summary)}`);
+  } catch {
+    redirect("/product-bank?hata=otomatik");
+  }
+}
+
+/** "Onayla": yalnızca katalog kaynaklı, inceleme istemeyen alanları doğrular. */
+export async function approveAutoAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const storeId = storeIdOf(formData);
+  const productMainId = String(formData.get("productMainId") ?? "");
+  if (!productMainId) redirect("/product-bank?hata=beklenmeyen-hata");
+
+  const result = await approveAutoFilled({ storeId, productMainId, actor }, {});
+  const summary = `${result.verified} alan doğrulandı · ${result.skipped} alan incelemede`;
+  redirect(`/product-bank?main=${encodeURIComponent(productMainId)}&ok=onay&ozet=${encodeURIComponent(summary)}#kart`);
 }

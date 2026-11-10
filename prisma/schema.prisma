@@ -24,6 +24,7 @@ model Store {
   syncRuns  SyncRun[]
   productInfos ProductInfo[]
   fieldSuggestions ProductFieldSuggestion[]
+  catalogProducts CatalogProduct[]
 
   @@map("stores")
 }
@@ -564,4 +565,36 @@ model OrderChangeEvent {
 
   @@index([requestId, createdAt])
   @@map("order_change_events")
+}
+
+/// Trendyol kataloğundan salt okunur çekilen ürün anlık görüntüsü (GÖREV 010).
+/// Kaynak doğrudan Trendyol'dur; burada üretilen hiçbir bilgi doğrulanmış sayılmaz.
+model CatalogProduct {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  productMainId String
+  title         String?
+  brand         String?
+  categoryName  String?
+  description   String? @db.Text
+  barcodeSample String?
+
+  /// Aynı productMainId altındaki barkod (varyant) sayısı.
+  variantCount Int     @default(0)
+  /// Sayfalama sınırına takıldıysa true: özellikler tüm varyantları kapsamaz.
+  truncated    Boolean @default(false)
+
+  /// Ortak/çoğunluk özellikler: [{ attributeId, name, value, share }]
+  attributes Json?
+  /// Katalogda görülen benzersiz özellik adları (teşhis için).
+  attributeNames Json?
+
+  fetchedAt DateTime  @default(now())
+  lastError String?
+
+  @@unique([storeId, productMainId])
+  @@index([storeId])
+  @@map("catalog_products")
 }

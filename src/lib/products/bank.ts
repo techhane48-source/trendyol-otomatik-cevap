@@ -27,13 +27,34 @@ export const FIELD_DEFS = [
 
 export type FieldKey = (typeof FIELD_DEFS)[number]["key"];
 
+export type AttributeSource =
+  | "MANUAL"
+  | "CSV"
+  | "SUGGESTION"
+  | "CARD"
+  /** Katalog özelliğinden otomatik çıkarıldı (GÖREV 010). */
+  | "CATALOG_ATTRIBUTE"
+  /** Ürün açıklamasından otomatik çıkarıldı. */
+  | "CATALOG_DESCRIPTION"
+  /** Geçmiş satıcı cevabından öneri. */
+  | "HISTORY_ANSWER";
+
 export interface BankAttribute {
   key: string;
   label: string;
   value: string;
   /** Alan bazında doğrulama. `true` değilse AI'ya doğrulanmış bilgi olarak girmez. */
   verified?: boolean;
-  source?: "MANUAL" | "CSV" | "SUGGESTION" | "CARD";
+  source?: AttributeSource;
+  /** Otomatik çıkarım güveni; doğrulama yerine geçmez. */
+  confidence?: "HIGH" | "MEDIUM" | "LOW";
+  /** Kanıt metni (hangi özellik/cümle). */
+  evidence?: string;
+  /** Aynı alanda görülen farklı değerler. */
+  alternatives?: string[];
+  /** İnsan incelemesi gerekiyor (belirsiz/çelişkili). */
+  needsReview?: boolean;
+  autoFilledAt?: string | null;
   verifiedAt?: string | null;
   verifiedBy?: string | null;
 }

@@ -741,3 +741,57 @@ npm run quality:product -- --onay --phase after      # alanları doğruladıktan
 
 `--phase after` doğrulanmış alan yoksa **exit 6** ile durur ve "kalite artışı iddia edilemez" yazar; böylece
 doğrulanmamış veriyle iyileşme raporlanamaz.
+
+## GÖREV 010 — Trendyol kataloğundan otomatik ürün bilgi bankası
+
+### Kullanılan resmî servisler (yalnızca GET)
+
+| Servis | Endpoint | Kullanım |
+| --- | --- | --- |
+| Ürün Filtreleme V1 (`filterProducts`) | `GET /integration/product/sellers/{sellerId}/products` | `approved=true`, `productMainId`, `page`, `size` |
+| Ürün Filtreleme – Temel Bilgiler V2 | `GET /integration/product/sellers/{sellerId}/product/{barcode}` | tek barkod doğrulama (istemcide hazır, akışta opsiyonel) |
+
+Ürün oluşturma/güncelleme/silme uçları **çağrılmaz**. Kimlik bilgileri log'a yazılmaz; hata mesajları yalnızca
+sınıf/kod içerir (`401/403/429/5xx`).
+
+### Akış
+
+1. **Ürünleri Getir** (`syncCatalogAction` → `src/lib/products/catalog-sync.ts`)
+   Sorularda geçen `productMainId`'ler için katalog taranır; ürün adı, açıklama, marka, kategori, özellikler ve
+   varyant sayısı `catalog_products` tablosuna **anlık görüntü** olarak yazılır. Ürün adı artık uydurulmuyor,
+   Trendyol'dan geliyor.
+2. **Bilgileri Otomatik Doldur** (`applyAutoFill`)
+   - Özellik değerleri (`CATALOG_ATTRIBUTE`): tüm varyantlarda aynıysa **HIGH**, çoğunlukta ise MEDIUM, farklı
+     değer varsa LOW + inceleme.
+   - Açıklama (`CATALOG_DESCRIPTION`): yalnızca açık ifadeler ("%100 keten", "pilesiz dikim", "makinede yıkanabilir").
+     Pazarlama cümleleri ve "T100" gibi kodlar elenir.
+   - Geçmiş cevap (`HISTORY_ANSWER`): düşük güven, **her zaman inceleme**.
+   - Hiçbir alan `verified` yazılmaz; doğrulanmış alan asla ezilmez.
+3. **Belirsizleri İncele** (`/product-bank?durum=inceleme`) yalnızca inceleme gerektiren ürünleri listeler; her alanın
+   kaynağı, güveni, kanıt metni ve varsa farklı değeri kartta görünür.
+4. **Onayla** (`approveAutoFilled`) yalnızca KATALOG kaynaklı ve inceleme istemeyen alanları doğrular. Geçmiş cevap
+   kaynaklı alanlar `includeHistory` açıkça verilmedikçe doğrulanmaz; inceleme bayraklı alanlar her zaman atlanır.
+
+### Eşleştirme
+
+Yalnızca `productMainId` üzerinden eşleşme yapılır; farklı ana ürün/varyant birleştirilmez. Bir ana ürün altında
+sayfalama sınırından (3 sayfa × 100) fazla varyant varsa kayıt `truncated=true` olur ve özellikler "tüm varyantlar"
+sayılmaz — bu ürünlerde alanlar incelemeye düşer.
+
+### Komutlar
+
+```bash
+npx tsx scripts/catalog-sync.mts            # yalnızca katalog anlık görüntüsü
+npx tsx scripts/catalog-sync.mts --apply    # kartlara taslak doldur
+npx tsx scripts/catalog-sync.mts --approve  # katalogdan gelen, inceleme istemeyen alanları doğrula
+```
+
+### Gerçek veriyle sonuç (bu makinede, canlı katalog)
+
+- Katalogdan çekilen ürün: **9 / 9**, görülen varyant: **1.633**, sayfa sınırına takılan: **3**
+- Sorularla eşleşen: **87 / 87** (tamamı `productMainId` ile)
+- Otomatik taslak doldurulan alan: **23** · insan incelemesi isteyen: **33** · boş kalan: **34**
+- Doğrulanmış alan: **0** (insan onayı olmadan hiçbir alan VERIFIED olmaz)
+
+Boş kalan alanlar katalogda karşılığı olmayan özelliklerdir (ör. kurşunlu etek, montaj); bunlar için geçmiş cevap
+önerileri ya da elle giriş gerekir.
