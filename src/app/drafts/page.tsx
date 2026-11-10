@@ -28,6 +28,7 @@ function formatDate(value: Date | null | undefined): string {
 
 const STATUS_LABELS: Record<DraftView["status"], string> = {
   PENDING: "Onay bekliyor",
+  NEEDS_INFO: "Bilgi eksik — düzenleyin",
   APPROVED: "Onaylandı",
   REJECTED: "Reddedildi",
   SUPERSEDED: "Geçersiz (yeni revizyon)",
@@ -207,7 +208,12 @@ export default async function DraftsPage({
                     </div>
 
                     <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-                      Ürün eşleşmesi: {MATCH_LABELS[latest.productMatch ?? ""] ?? latest.productMatch ?? "—"}
+                      <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                      Model: {latest.model ?? "—"} · {latest.durationMs ?? "—"} ms ·{" "}
+                      {latest.totalTokens ? `${latest.totalTokens} token` : "token bilgisi yok"}
+                      {latest.usageEstimated ? " (tahmini)" : ""} · {latest.estimatedCostUSD != null ? `$${latest.estimatedCostUSD.toFixed(6)}` : "maliyet —"}
+                    </div>
+                    Ürün eşleşmesi: {MATCH_LABELS[latest.productMatch ?? ""] ?? latest.productMatch ?? "—"}
                     </div>
 
                     {latest.usedFacts.length > 0 ? (

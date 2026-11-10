@@ -24,6 +24,10 @@ const provider = createMockProvider(
 );
 
 async function resetDatabase(): Promise<void> {
+  await prisma.qualityItem.deleteMany();
+  await prisma.qualityRun.deleteMany();
+  await prisma.qualitySet.deleteMany();
+  await prisma.llmUsage.deleteMany();
   await prisma.draftEvent.deleteMany();
   await prisma.answerDraft.deleteMany();
   await prisma.productInfoEvent.deleteMany();

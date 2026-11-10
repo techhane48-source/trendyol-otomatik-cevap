@@ -145,6 +145,7 @@ model ProductInfoEvent {
 
 enum DraftStatus {
   PENDING
+  NEEDS_INFO
   APPROVED
   REJECTED
   SUPERSEDED
@@ -195,6 +196,15 @@ model AnswerDraft {
   usedFacts     Json?
   /// Taslakta eksik/doğrulanmamış görünen bilgiler (insan onayı için)
   missingInfo   Json?
+
+  /// Üretim ölçümleri (maliyet raporu için)
+  durationMs       Int?
+  inputTokens      Int?
+  outputTokens     Int?
+  totalTokens      Int?
+  estimatedCostUSD Float?
+  /// Token/maliyet değerleri sağlayıcıdan gelmediyse tahmin edildi mi?
+  usageEstimated   Boolean @default(false)
 
   createdBy  String?
   approvedBy String?
@@ -265,4 +275,106 @@ model SyncRun {
 
   @@index([storeId, startedAt])
   @@map("sync_runs")
+}
+
+/// Her LLM çağrısının (başarılı/başarısız) kullanım ve maliyet kaydı.
+/// Anahtar, prompt metni veya müşteri verisi SAKLANMAZ.
+model LlmUsage {
+  id            String   @id @default(cuid())
+  provider      String
+  model         String
+  promptVersion String
+  /// SUCCESS | ERROR | EMPTY
+  outcome       String
+  /// Hata durumunda güvenli kod (HTTP_429, TIMEOUT, INVALID_JSON ...)
+  errorCode     String?
+
+  durationMs    Int
+  inputTokens   Int      @default(0)
+  outputTokens  Int      @default(0)
+  totalTokens   Int      @default(0)
+  /// Sağlayıcı usage vermediyse tahmin edilir ve `estimated=true` olur.
+  estimated     Boolean  @default(false)
+  estimatedCostUSD Float @default(0)
+
+  /// Çağrının bağlamı (müşteri verisi değil)
+  draftId    String?
+  questionId String?
+  purpose    String   @default("draft")
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([provider, model])
+  @@index([purpose])
+  @@map("llm_usages")
+}
+
+/// Kalite değerlendirme seti (30–50 örnek).
+model QualitySet {
+  id        String   @id @default(cuid())
+  name      String
+  createdBy String
+  /// Sabitlenen örnek soru kimlikleri (tekrar çalıştırmada aynı sorular kullanılır)
+  sampleQuestionIds Json?
+  sampleCount Int @default(0)
+  createdAt DateTime @default(now())
+
+  runs QualityRun[]
+
+  @@map("quality_sets")
+}
+
+/// Bir setin tek değerlendirme koşusu (prompt sürümü karşılaştırması için).
+model QualityRun {
+  id            String   @id @default(cuid())
+  setId         String
+  set           QualitySet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  promptVersion String
+  provider      String
+  model         String
+  /// RUNNING | COMPLETED | PARTIAL | FAILED
+  status        String   @default("RUNNING")
+  startedBy     String
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  totalCostUSD  Float    @default(0)
+  totalTokens   Int      @default(0)
+  itemCount     Int      @default(0)
+
+  items QualityItem[]
+
+  @@index([setId, startedAt])
+  @@map("quality_runs")
+}
+
+/// Değerlendirilen tek örnek: maskelenmiş soru, AI cevabı, otomatik kontroller, insan puanı.
+model QualityItem {
+  id       String     @id @default(cuid())
+  runId    String
+  run      QualityRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// Kaynak soru (silinmez; yalnızca referans)
+  questionId String?
+
+  /// Kişisel verileri maskelenmiş soru metni
+  questionMasked String
+  answerText     String
+  /// Otomatik kontroller: warnings, eksik bilgi, vaat tespiti, üslup metrikleri
+  autoChecks     Json?
+  /// NEEDS_INFO / OK / EMPTY
+  outcome        String  @default("OK")
+  inputTokens    Int     @default(0)
+  outputTokens   Int     @default(0)
+  costUSD        Float   @default(0)
+  durationMs     Int     @default(0)
+
+  humanScore   Int?
+  humanNote    String?
+  evaluatedBy  String?
+  evaluatedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([runId])
+  @@map("quality_items")
 }

@@ -7,7 +7,7 @@
  * edilmeden (acknowledgeWarnings) yapılamaz.
  */
 
-export type WarningKind = "MEASUREMENT" | "WARRANTY" | "SHIPPING" | "MATERIAL" | "STOCK";
+export type WarningKind = "MEASUREMENT" | "WARRANTY" | "SHIPPING" | "MATERIAL" | "STOCK" | "PROMISE";
 
 export interface DraftWarning {
   kind: WarningKind;
@@ -23,6 +23,13 @@ const PATTERNS: Array<{ kind: WarningKind; regex: RegExp }> = [
   { kind: "SHIPPING", regex: /(?:ücretsiz|ucretsiz)\s?kargo\w*/gi },
   { kind: "MATERIAL", regex: /(?:%?\d{1,3}\s?)?(?:pamuk|polyester|ipek|yün|yun|keten|viskon|kadife|saten)\w*/gi },
   { kind: "STOCK", regex: /stok\w*\s?\d+/gi },
+  // Doğrulanmamış kesin vaatler
+  { kind: "PROMISE", regex: /kesinlikle\s+(?:göstermez|gostermez|geçirmez|gecirmez|solmaz|çekmez|cekmеz)/gi },
+  { kind: "PROMISE", regex: /tam\s+karartma\s+(?:sağlar|saglar|yapar)/gi },
+  { kind: "PROMISE", regex: /(?:yarın|yarin|bugün|bugun)\s+teslim\w*/gi },
+  { kind: "PROMISE", regex: /\b(?:asla|hiçbir\s+zaman|hicbir\s+zaman)\s+\w+/gi },
+  { kind: "PROMISE", regex: /(?:iade|değişim|degisim)\s+garanti\w*/gi },
+  { kind: "PROMISE", regex: /\b(?:hepsi|tümü|tumu)\s+(?:bedava|ücretsiz|ucretsiz)\b/gi },
 ];
 
 function normalize(value: string): string {

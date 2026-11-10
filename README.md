@@ -366,3 +366,63 @@ bir ağ/VPN arkasında tutmak ek savunma katmanı olarak önerilir.
 - Cevap gönderme, ürün/sipariş işlemleri yok (bilinçli).
 - Kimlik doğrulama/çoklu kullanıcı yok; tek satıcı `.env` üzerinden yapılandırılır.
 - Zamanlanmış senkronizasyon yok; `POST /api/sync` ile manuel tetiklenir.
+
+## Gerçek LLM, maliyet ölçümü ve kalite değerlendirme (GÖREV 005)
+
+### Sağlayıcı yapılandırması
+
+| Değişken | Açıklama |
+| --- | --- |
+| `LLM_PROVIDER` | `disabled` (varsayılan) / `mock` / `openai-compatible` |
+| `LLM_BASE_URL` | OpenAI uyumlu kök adres (`.../v1`); kod `/chat/completions` ekler |
+| `LLM_API_KEY` | Yalnızca `.env`'de tutulur; log/DB/hata mesajına yazılmaz |
+| `LLM_MODEL` | Ör. `gpt-4o-mini` |
+| `LLM_MAX_RETRIES` / `LLM_RETRY_BASE_MS` | 429/5xx/ağ hatasında tekrar sayısı ve bekleme |
+| `LLM_INPUT_COST_PER_1K` / `LLM_OUTPUT_COST_PER_1K` | 1K token başına USD. **Sabit fiyat varsayılmaz**; tanımlanmazsa maliyet 0 raporlanır |
+
+Hata yönetimi: `429/5xx/ağ` → sınırlı tekrar (`Retry-After`'a uyulur), `400/401/403/404` → tekrar yok,
+bozuk JSON → `INVALID_JSON`, zaman aşımı → `TIMEOUT`, boş yanıt → `EMPTY_RESPONSE`. Sağlayıcı hata gövdesi
+okunmaz; anahtar hiçbir koşulda mesaja/loga/veritabanına yazılmaz.
+
+### Güvenli cevap üretimi
+
+- Müşteri metni **güvenilmez veri** olarak işaretlenir (`<<<SORU_BASLANGIC>>>` sınırları), injection kalıpları
+  etkisizleştirilir, telefon/e‑posta/IBAN/sipariş no maskelenir (`src/lib/llm/sanitize.ts`).
+- Guardrail'e `PROMISE` türü eklendi: "kesinlikle göstermez", "tam karartma sağlar", "yarın teslim",
+  "iade garantisi" gibi doğrulanmamış vaatler yakalanır.
+- Doğrulanmış bilgi **yokken** kesin vaat içeren taslak `NEEDS_INFO` durumunda açılır ve onaylanamaz;
+  insan düzenleyip yeni revizyon açana kadar onay yolu kapalıdır. Diğer uyarılar mevcut
+  `acknowledgeWarnings` akışıyla onaylanabilir.
+- Elle girilen bilgi doğrulanmış ürün kartı statüsü **kazanmaz** (`ProductInfo.status` yalnızca yönetici
+  doğrulamasıyla `VERIFIED` olur, kullanım kaynağı taslakta `MANUAL` olarak görünür).
+
+### Token ve maliyet kaydı
+
+Her çağrı `llm_usages` tablosuna yazılır: `provider, model, promptVersion, outcome (SUCCESS/ERROR), errorCode,
+durationMs, inputTokens, outputTokens, totalTokens, estimated, estimatedCostUSD, draftId, questionId, purpose, createdAt`.
+Sağlayıcı `usage` vermezse token tahmin edilir ve `estimated = true` işaretlenir. Başarısız çağrılar da kaydedilir.
+Taslak ekranında model, süre, token ve tahmini maliyet gösterilir; `/quality` günlük ve toplam rapor verir.
+
+### Kalite sistemi (`/quality`)
+
+- Yalnızca yönetici oturumuyla erişilir.
+- 30–50 örnekli set, gerçek sorulardan **seçilerek** oluşturulur; sorular sette sabitlenir, böylece aynı set
+  farklı prompt sürümleriyle yeniden çalıştırılıp karşılaştırılabilir.
+- Otomatik kontroller: uyarı sayısı, doğrulanmış bilgi var/yok, cümle sayısı, karakter uzunluğu, selamlama/emoji,
+  `needsHuman` önerisi. Bunlar insan değerlendirmesinin **yerine geçmez**; 1–5 puan ve not insan tarafından girilir.
+- Saklanan soru metni PII maskelenmiştir; Trendyol'a istek gitmez, cevap yazılmaz.
+- Panelde test edilen soru sayısı, ortalama insan puanı, uyarı oranı, bilgi eksikliği oranı, tahmini toplam maliyet
+  ve günlük kullanım tablosu bulunur.
+
+### Veritabanı bütünlüğü
+
+`product_infos_main_unique` kısmi (partial) benzersiz indeksi: aynı mağaza + `productMainId` için `productId IS NULL`
+olan **tek** kayıt. Migration öncesinde mükerrer kontrol yapar; mükerrer varsa **silmez/birleştirmez**, açık hata
+mesajıyla durur. Ana ürün kartına varyantlar arasında farklılaşan özellik yazılamaz (`MAIN_CARD_CONFLICT`).
+
+### Test kapsamı
+
+`npm test` → 12 dosya / **184 test** (GÖREV 004'ün 149 testi korunuyor). Yeni testler: sağlayıcı 429/5xx/timeout/
+bozuk JSON/boş yanıt, usage ayrıştırma ve maliyet, PII maskeleme, prompt injection, vaat tespiti, `NEEDS_INFO`,
+kullanım/başarısız çağrı kaydı, kalite koşusu ve puanlama, yetkisiz erişim, tekrar çalıştırma, NULL `productId`
+benzersizlik ve ana ürün kartı çakışması.

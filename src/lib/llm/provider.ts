@@ -9,14 +9,21 @@ import {
   type LlmMessage,
   type LlmProvider,
 } from "./types";
+import { estimateUsage, parseUsage, type LlmUsageInfo } from "./usage";
 
 /**
  * Sağlayıcı katmanı.
  *
- * `openai-compatible`: OpenAI /v1/chat/completions sözleşmesini konuşan her sunucu
- * (OpenAI, Azure OpenAI uyumlu geçitler, yerel vLLM/Ollama proxy'leri) ile çalışır.
- * Anahtar yalnızca ortam değişkeninden okunur; hiçbir yere yazılmaz ve hata
- * mesajlarına eklenmez.
+ * `openai-compatible`: OpenAI `/v1/chat/completions` sözleşmesini konuşan her sunucu
+ * (OpenAI, uyumlu geçitler, yerel vLLM/Ollama proxy'leri) ile çalışır.
+ *
+ * Güvenlik ve sağlamlık:
+ * - Anahtar yalnızca ortam değişkeninden okunur; hata mesajına/loga/DB'ye yazılmaz.
+ * - Sağlayıcı hata GÖVDESİ okunmaz (anahtar parçası veya kişisel veri içerebilir).
+ * - 429 / 5xx / ağ hatası: sınırlı tekrar + üstel bekleme (Retry-After'a uyulur).
+ * - 400 / 401 / 403 / 404: tekrar denenmez.
+ * - Bozuk JSON yanıtı `INVALID_JSON` olarak raporlanır.
+ * - `usage` alanı yoksa token sayısı tahmin edilir ve `estimated = true` işaretlenir.
  */
 
 export interface OpenAiCompatibleOptions {
@@ -26,77 +33,148 @@ export interface OpenAiCompatibleOptions {
   timeoutMs: number;
   maxTokens: number;
   temperature: number;
+  maxRetries?: number;
+  retryBaseMs?: number;
+  promptVersion?: string;
   /** Testlerde enjekte edilir. */
   fetchImpl?: typeof fetch;
+  /** Testlerde beklemesiz çalışmak için. */
+  sleepImpl?: (ms: number) => Promise<void>;
 }
 
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
   model?: string;
+  usage?: unknown;
+}
+
+type RetryMeta = { retryable?: boolean; retryAfter?: number | null };
+
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryAfterMs(response: Response): number | null {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds * 1_000, 5_000) : null;
 }
 
 export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions): LlmProvider {
   const doFetch = options.fetchImpl ?? fetch;
+  const sleep = options.sleepImpl ?? defaultSleep;
+  const maxRetries = options.maxRetries ?? 1;
+  const retryBaseMs = options.retryBaseMs ?? 400;
+  const promptVersion = options.promptVersion ?? PROMPT_VERSION;
   const endpoint = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+
+  async function attempt(messages: LlmMessage): Promise<{ text: string; model: string; usage: LlmUsageInfo }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+
+    try {
+      const response = await doFetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${options.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: options.model,
+          temperature: options.temperature,
+          max_tokens: options.maxTokens,
+          messages: [
+            { role: "system", content: messages.system },
+            { role: "user", content: messages.user },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        // Gövde bilinçli olarak okunmaz/yansıtılmaz.
+        const error = new LlmRequestError(
+          `HTTP_${response.status}`,
+          `LLM sağlayıcısı isteği reddetti (HTTP ${response.status}).`,
+        ) as LlmRequestError & RetryMeta;
+        error.retryable = RETRYABLE_STATUS.has(response.status);
+        error.retryAfter = retryAfterMs(response);
+        throw error;
+      }
+
+      let payload: ChatCompletionResponse;
+      try {
+        payload = (await response.json()) as ChatCompletionResponse;
+      } catch {
+        throw new LlmRequestError("INVALID_JSON", "LLM yanıtı geçerli JSON değil.");
+      }
+
+      const content = payload.choices?.[0]?.message?.content ?? payload.choices?.[0]?.text;
+      const text = typeof content === "string" ? content.trim() : "";
+
+      if (text.length === 0) {
+        throw new LlmRequestError("EMPTY_RESPONSE", "LLM boş yanıt döndü.");
+      }
+
+      const usage = parseUsage(payload) ?? estimateUsage(messages.system, messages.user, text);
+      return { text, model: payload.model ?? options.model, usage };
+    } catch (error) {
+      if (error instanceof LlmRequestError) throw error;
+
+      if (error instanceof Error && error.name === "AbortError") {
+        const timeout = new LlmRequestError(
+          "TIMEOUT",
+          "LLM isteği zaman aşımına uğradı.",
+        ) as LlmRequestError & RetryMeta;
+        timeout.retryable = true;
+        throw timeout;
+      }
+
+      const network = new LlmRequestError(
+        "NETWORK",
+        "LLM sağlayıcısına ulaşılamadı.",
+      ) as LlmRequestError & RetryMeta;
+      network.retryable = true;
+      throw network;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   return {
     name: "openai-compatible",
     model: options.model,
     async complete(messages: LlmMessage): Promise<LlmCompletion> {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+      const startedAt = Date.now();
+      let lastError: LlmRequestError | null = null;
 
-      try {
-        const response = await doFetch(endpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${options.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: options.model,
-            temperature: options.temperature,
-            max_tokens: options.maxTokens,
-            messages: [
-              { role: "system", content: messages.system },
-              { role: "user", content: messages.user },
-            ],
-          }),
-          signal: controller.signal,
-        });
+      for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex += 1) {
+        try {
+          const result = await attempt(messages);
+          return {
+            text: result.text,
+            provider: "openai-compatible",
+            model: result.model,
+            promptVersion,
+            durationMs: Date.now() - startedAt,
+            usage: result.usage,
+          };
+        } catch (error) {
+          if (!(error instanceof LlmRequestError)) throw error;
+          lastError = error;
 
-        if (!response.ok) {
-          // Yanıt gövdesi bilinçli olarak okunmaz/yansıtılmaz: sağlayıcı hata
-          // mesajları anahtar parçası veya istek içeriği barındırabilir.
-          throw new LlmRequestError(
-            `HTTP_${response.status}`,
-            `LLM sağlayıcısı isteği reddetti (HTTP ${response.status}).`,
-          );
+          const meta = error as LlmRequestError & RetryMeta;
+          if (meta.retryable !== true || attemptIndex === maxRetries) throw error;
+
+          const waitMs = meta.retryAfter ?? retryBaseMs * Math.pow(2, attemptIndex);
+          await sleep(Math.min(waitMs, 5_000));
         }
-
-        const payload = (await response.json()) as ChatCompletionResponse;
-        const content = payload.choices?.[0]?.message?.content ?? payload.choices?.[0]?.text;
-        const text = typeof content === "string" ? content.trim() : "";
-
-        if (text.length === 0) {
-          throw new LlmRequestError("EMPTY_RESPONSE", "LLM boş yanıt döndü.");
-        }
-
-        return {
-          text,
-          provider: "openai-compatible",
-          model: payload.model ?? options.model,
-          promptVersion: PROMPT_VERSION,
-        };
-      } catch (error) {
-        if (error instanceof LlmRequestError) throw error;
-        if (error instanceof Error && error.name === "AbortError") {
-          throw new LlmRequestError("TIMEOUT", "LLM isteği zaman aşımına uğradı.");
-        }
-        throw new LlmRequestError("NETWORK", "LLM sağlayıcısına ulaşılamadı.");
-      } finally {
-        clearTimeout(timer);
       }
+
+      throw lastError ?? new LlmRequestError("UNKNOWN", "LLM isteği başarısız oldu.");
     },
   };
 }
@@ -112,9 +190,17 @@ export function createMockProvider(
     name: "mock",
     model: "mock-model",
     async complete(messages: LlmMessage): Promise<LlmCompletion> {
+      const startedAt = Date.now();
       const text = generator(messages).trim();
       if (text.length === 0) throw new LlmRequestError("EMPTY_RESPONSE", "LLM boş yanıt döndü.");
-      return { text, provider: "mock", model: "mock-model", promptVersion: PROMPT_VERSION };
+      return {
+        text,
+        provider: "mock",
+        model: "mock-model",
+        promptVersion: PROMPT_VERSION,
+        durationMs: Date.now() - startedAt,
+        usage: estimateUsage(messages.system, messages.user, text),
+      };
     },
   };
 }
@@ -151,5 +237,8 @@ export function createLlmProvider(env: AppEnv = getEnv()): LlmProvider {
     timeoutMs: env.LLM_TIMEOUT_MS,
     maxTokens: env.LLM_MAX_TOKENS,
     temperature: env.LLM_TEMPERATURE,
+    maxRetries: env.LLM_MAX_RETRIES,
+    retryBaseMs: env.LLM_RETRY_BASE_MS,
+    promptVersion: env.LLM_PROMPT_VERSION,
   });
 }

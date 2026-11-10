@@ -149,6 +149,47 @@ async function resolveStoreId(
   return store.id;
 }
 
+/**
+ * Ana ürün kartı (productId IS NULL) yalnızca TÜM varyantlarda ortak olan
+ * doğrulanmış özellikleri temsil edebilir. Varyantlar arasında farklılaşan
+ * (ya da bazı varyantlarda hiç olmayan) bir etiket ana karta yazılamaz.
+ */
+async function assertMainCardOnlyCommonAttributes(
+  prisma: PrismaClient,
+  storeId: string,
+  productMainId: string,
+  attributes: ProductAttribute[],
+): Promise<void> {
+  if (attributes.length === 0) return;
+
+  const variants = await prisma.productInfo.findMany({
+    where: { storeId, productMainId, productId: { not: null } },
+    select: { attributes: true },
+  });
+  if (variants.length === 0) return;
+
+  const perVariant = variants.map((variant) => {
+    const list = Array.isArray(variant.attributes) ? (variant.attributes as unknown as ProductAttribute[]) : [];
+    return new Map(list.map((item) => [item.label.trim().toLowerCase(), item.value.trim()]));
+  });
+
+  const common = new Map<string, string>();
+  for (const [label, value] of perVariant[0]) {
+    if (perVariant.every((map) => map.get(label) === value)) common.set(label, value);
+  }
+
+  const conflicts = attributes.filter((attribute) => !common.has(attribute.label.trim().toLowerCase()));
+
+  if (conflicts.length > 0) {
+    throw new ProductInfoError(
+      "MAIN_CARD_CONFLICT",
+      `Ana ürün kartı yalnızca varyantlarda ortak olan bilgileri içerebilir. Çıkarılması gereken alanlar: ${conflicts
+        .map((attribute) => attribute.label)
+        .join(", ")}. Varyanta özel bilgiyi varyant kartına girin.`,
+    );
+  }
+}
+
 export async function createProductInfo(
   input: {
     storeId?: string | null;
@@ -190,6 +231,10 @@ export async function createProductInfo(
       "DUPLICATE_PRODUCT_INFO",
       "Bu mağaza ve ürün kimliği için kayıt zaten var. Düzenleyin.",
     );
+  }
+
+  if (productId === null) {
+    await assertMainCardOnlyCommonAttributes(prisma, storeId, productMainId, attributes);
   }
 
   const created = await prisma.$transaction(async (tx) => {
@@ -244,6 +289,10 @@ export async function updateProductInfo(
 
   const attributes = input.attributes ? validateAttributes(input.attributes) : normalizeAttributes(current.attributes);
   const productId = input.productId === undefined ? current.productId : input.productId?.trim() || null;
+
+  if (productId === null) {
+    await assertMainCardOnlyCommonAttributes(prisma, current.storeId, current.productMainId, attributes);
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.productInfo.update({

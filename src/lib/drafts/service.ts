@@ -6,7 +6,9 @@ import { getPrisma } from "@/lib/prisma";
 import { detectUnverifiedClaims, normalizeDraftText, type DraftWarning } from "./../llm/guardrails";
 import { buildDraftMessages } from "./../llm/prompt";
 import { createLlmProvider } from "./../llm/provider";
-import { LlmNotConfiguredError, type LlmProvider } from "./../llm/types";
+import { sanitizeQuestion } from "./../llm/sanitize";
+import { LlmNotConfiguredError, LlmRequestError, type LlmProvider } from "./../llm/types";
+import { computeCostUSD, resolvePricing } from "./../llm/usage";
 import { isUsableForDraft, matchProductInfo } from "@/lib/products/matching";
 import { findProductInfoForQuestion, type ProductAttribute } from "@/lib/products/service";
 
@@ -64,7 +66,7 @@ export interface DraftDeps {
 export interface DraftView {
   id: string;
   revision: number;
-  status: "PENDING" | "APPROVED" | "REJECTED" | "SUPERSEDED";
+  status: "PENDING" | "NEEDS_INFO" | "APPROVED" | "REJECTED" | "SUPERSEDED";
   source: "AI" | "HUMAN_EDIT";
   text: string;
   warnings: DraftWarning[];
@@ -78,6 +80,13 @@ export interface DraftView {
   usedFacts: Array<{ label: string; value: string; source?: string }>;
   /** Eksik/doğrulanmamış bilgiler */
   missingInfo: string[];
+  /** Üretim ölçümleri */
+  durationMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostUSD: number | null;
+  usageEstimated: boolean;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -125,6 +134,12 @@ function toView(draft: {
   productMatch?: string | null;
   usedFacts?: unknown;
   missingInfo?: unknown;
+  durationMs?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  estimatedCostUSD?: number | null;
+  usageEstimated?: boolean | null;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -142,6 +157,12 @@ function toView(draft: {
       ? (draft.usedFacts as Array<{ label: string; value: string; source?: string }>)
       : [],
     missingInfo: Array.isArray(draft.missingInfo) ? (draft.missingInfo as string[]) : [],
+    durationMs: draft.durationMs ?? null,
+    inputTokens: draft.inputTokens ?? null,
+    outputTokens: draft.outputTokens ?? null,
+    totalTokens: draft.totalTokens ?? null,
+    estimatedCostUSD: draft.estimatedCostUSD ?? null,
+    usageEstimated: draft.usageEstimated ?? false,
   };
 }
 
@@ -210,8 +231,10 @@ export async function createAiDraft(
   const productInfoText =
     usedFacts.length > 0 ? usedFacts.map((fact) => `${fact.label}: ${fact.value}`).join("\n") : null;
 
+  const sanitized = sanitizeQuestion(question.text);
+
   const messages = buildDraftMessages({
-    questionText: question.text,
+    questionText: sanitized.text,
     productName: question.productName,
     productMainId: question.productMainId,
     productInfo: productInfoText,
@@ -219,14 +242,49 @@ export async function createAiDraft(
     tone: null,
   });
 
-  const completion = await provider.complete(messages);
+  const llmStartedAt = Date.now();
+  let completion;
+  try {
+    completion = await provider.complete(messages);
+  } catch (error) {
+    // Başarısız çağrı da kaydedilir (anahtar/prompt/müşteri verisi YAZILMAZ).
+    await prisma.llmUsage.create({
+      data: {
+        provider: provider.name,
+        model: provider.model,
+        promptVersion: env.LLM_PROMPT_VERSION,
+        outcome: "ERROR",
+        errorCode: error instanceof LlmRequestError ? error.code : "UNKNOWN",
+        durationMs: Date.now() - llmStartedAt,
+        estimated: true,
+        estimatedCostUSD: 0,
+        questionId: question.id,
+        purpose: "draft",
+      },
+    });
+    throw error;
+  }
+
   const text = normalizeDraftText(completion.text);
   if (text.length === 0) throw new DraftError("EMPTY_DRAFT", "Model boş taslak döndü.");
+
+  const costUSD = computeCostUSD(completion.usage, resolvePricing(env));
 
   const warnings = detectUnverifiedClaims(
     text,
     [question.productName, question.productMainId, productInfoText].filter(Boolean).join(" "),
   );
+
+  if (sanitized.injectionSuspected) {
+    missingInfo.push("Soru metninde talimat benzeri ifade tespit edildi; güvenilmeyen veri olarak işlendi.");
+  }
+
+  // Doğrulanmış bilgi yokken KESİN VAAT (PROMISE) üretildiyse taslak onaya açılmaz:
+  // NEEDS_INFO, insan müdahalesi (düzenleme) gerektiğini açıkça gösterir. Sıradan
+  // ölçü/malzeme uyarıları mevcut "uyarıyı kabul et" akışıyla onaylanabilir kalır.
+  const hasUnverifiedPromise = warnings.some((warning) => warning.kind === "PROMISE");
+  const needsInfo = hasUnverifiedPromise && usedFacts.length === 0;
+  const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
 
   const draft = await prisma.$transaction(async (tx) => {
     const last = await tx.answerDraft.findFirst({
@@ -255,7 +313,7 @@ export async function createAiDraft(
         questionId: question.id,
         storeId: question.storeId,
         revision,
-        status: "PENDING",
+        status: draftStatus,
         source: "AI",
         text,
         warnings: warnings.length > 0 ? (warnings as unknown as object) : undefined,
@@ -265,6 +323,12 @@ export async function createAiDraft(
         productMatch: match.kind,
         usedFacts: usedFacts.length > 0 ? (usedFacts as unknown as object) : undefined,
         missingInfo: missingInfo.length > 0 ? (missingInfo as unknown as object) : undefined,
+        durationMs: completion.durationMs,
+        inputTokens: completion.usage.inputTokens,
+        outputTokens: completion.usage.outputTokens,
+        totalTokens: completion.usage.totalTokens,
+        estimatedCostUSD: costUSD,
+        usageEstimated: completion.usage.estimated,
         createdBy: actorName,
       },
     });
@@ -279,6 +343,24 @@ export async function createAiDraft(
     });
 
     return created;
+  });
+
+  await prisma.llmUsage.create({
+    data: {
+      provider: completion.provider,
+      model: completion.model,
+      promptVersion: completion.promptVersion,
+      outcome: "SUCCESS",
+      durationMs: completion.durationMs,
+      inputTokens: completion.usage.inputTokens,
+      outputTokens: completion.usage.outputTokens,
+      totalTokens: completion.usage.totalTokens,
+      estimated: completion.usage.estimated,
+      estimatedCostUSD: costUSD,
+      draftId: draft.id,
+      questionId: question.id,
+      purpose: "draft",
+    },
   });
 
   log.info("AI taslağı oluşturuldu", {
@@ -381,6 +463,12 @@ export async function approveDraft(
   if (draft.status === "REJECTED") throw new DraftError("DRAFT_REJECTED", "Reddedilmiş taslak onaylanamaz.");
   if (draft.status === "SUPERSEDED") {
     throw new DraftError("DRAFT_SUPERSEDED", "Daha yeni bir revizyon var; onaylamak için son revizyonu kullanın.");
+  }
+  if (draft.status === "NEEDS_INFO") {
+    throw new DraftError(
+      "DRAFT_NEEDS_INFO",
+      "Bu taslak doğrulanmış bilgi olmadan somut iddia içeriyor. Önce düzenleyip bilgiyi doğrulayın, sonra onaylayın.",
+    );
   }
 
   const warnings = toWarnings(draft.warnings);

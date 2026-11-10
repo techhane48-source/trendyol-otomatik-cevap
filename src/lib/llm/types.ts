@@ -21,6 +21,8 @@ export interface DraftContext {
   tone?: string | null;
 }
 
+import type { LlmUsageInfo } from "./usage";
+
 export interface LlmMessage {
   system: string;
   user: string;
@@ -33,6 +35,10 @@ export interface LlmCompletion {
   /** Kullanılan model adı (ör. "gpt-4o-mini"). Anahtar içermez. */
   model: string;
   promptVersion: string;
+  /** Çağrı süresi (ms) */
+  durationMs: number;
+  /** Sağlayıcının verdiği ya da tahmin edilen token kullanımı */
+  usage: LlmUsageInfo;
 }
 
 export interface LlmProvider {

@@ -63,6 +63,15 @@ const envSchema = z.object({
   LLM_TEMPERATURE: z.coerce.number().min(0).max(1.5).default(0.2),
   /** Prompt sürümü: üretilen taslağın hangi kurallarla yazıldığını izlemek için. */
   LLM_PROMPT_VERSION: z.string().trim().min(1).default("v1"),
+  /** 429/5xx/ağ hatasında tekrar sayısı (0 = tekrar yok). */
+  LLM_MAX_RETRIES: z.coerce.number().int().min(0).max(3).default(1),
+  LLM_RETRY_BASE_MS: z.coerce.number().int().min(0).max(10_000).default(400),
+  /**
+   * 1K token başına USD fiyat. Sabit fiyat VARSAYILMAZ: tanımlanmazsa maliyet 0
+   * raporlanır. Sağlayıcı fiyat listenize göre .env'de ayarlayın.
+   */
+  LLM_INPUT_COST_PER_1K: z.coerce.number().min(0).max(1_000).default(0),
+  LLM_OUTPUT_COST_PER_1K: z.coerce.number().min(0).max(1_000).default(0),
 
   /** Onaylayan/reddeden kişinin adı (tek kiracılı kurulumda kimlik yerine geçer). */
   ADMIN_ACTOR_NAME: z.string().trim().min(1).default("admin"),
