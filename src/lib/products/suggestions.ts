@@ -2,6 +2,7 @@ import { getPrisma } from "@/lib/prisma";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { classifyQuestion, isFeatureCategory, type QuestionCategory } from "@/lib/history/categories";
 import { detectStaleClaims } from "@/lib/history/guard";
+import { evaluateGroup } from "./value-semantics";
 
 import { setField, type FieldKey } from "./bank";
 
@@ -29,18 +30,40 @@ export interface SuggestionCandidate {
   value: string;
   sourceQuestionIds: string[];
   conflict: boolean;
+  /** Çelişki yok ama değer belirsiz: insan incelemesi */
+  needsReview: boolean;
   conflictValues: string[];
 }
 
 /** Cevabı alan değerine indirger: selamlama/kişi eklerini temizler, uzunluğu sınırlar. */
-export function normalizeFieldValue(answer: string): string {
+export function normalizeFieldValue(answer: string, fieldKey?: string): string {
   const cleaned = answer
     .replace(/\b(efendim|merhaba|merhabalar|selam|teşekkürler|teşekkür ederim|rica ederim)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
   const sentences = cleaned.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim().length > 0);
-  const value = (sentences[0] ?? cleaned).trim();
+  const relevant = fieldKey
+    ? sentences.find((sentence) => evaluateGroup(fieldKey, [sentence]).needsReview || /\d|[üu]t[üu]|pile|kur[şs]un|karartma|makine|dikim/i.test(sentence))
+    : undefined;
+  const value = (relevant ?? sentences[0] ?? cleaned).trim();
   return value.length > 160 ? `${value.slice(0, 157)}…` : value;
+}
+
+/**
+ * Tek kelimelik / boilerplate cevaplar ("Evet", "Teşekkürler", "Sık sorulan sorular")
+ * alan değeri olamaz; bunlar kart doldurmaya yardımcı olmaz.
+ */
+const BOILERPLATE = [
+  /s[ıi]k\s*sorulan/i,
+  /sorular[ıi]n[ıi]z/i,
+  /te[şs]ekk[üu]r/i,
+  /merhaba|iyi\s*g[üu]nler/i,
+  /^\s*(evet|hay[ıi]r|tamam|olur|yok|var)\b/i,
+];
+
+export function isUsableSuggestionValue(value: string): boolean {
+  if (BOILERPLATE.some((pattern) => pattern.test(value))) return false;
+  return value.replace(/\s+/g, "").length >= 8;
 }
 
 export function extractFeatureCandidates(
@@ -58,8 +81,8 @@ export function extractFeatureCandidates(
     const fieldKey = CATEGORY_TO_FIELD[category];
     if (!fieldKey) continue;
 
-    const value = normalizeFieldValue(answer.answerText);
-    if (value.length < 3) continue;
+    const value = normalizeFieldValue(answer.answerText, CATEGORY_TO_FIELD[category]);
+    if (!isUsableSuggestionValue(value)) continue;
 
     const perValue = grouped.get(fieldKey) ?? new Map<string, string[]>();
     const sources = perValue.get(value) ?? [];
@@ -72,15 +95,18 @@ export function extractFeatureCandidates(
 
   for (const [fieldKey, values] of grouped) {
     const entries = [...values.entries()];
-    const distinct = entries.map(([value]) => value);
+    const verdict = evaluateGroup(fieldKey, entries.map(([value]) => value));
 
     for (const [value, sourceQuestionIds] of entries) {
+      // Yalnızca birbirini dışlayan değerler "çelişki" sayılır; farklı cümleler değil.
+      const conflicting = verdict.conflict && verdict.conflictValues.includes(value);
       candidates.push({
         fieldKey,
         value,
         sourceQuestionIds,
-        conflict: distinct.length > 1,
-        conflictValues: distinct.length > 1 ? distinct.filter((item) => item !== value).slice(0, 3) : [],
+        conflict: conflicting,
+        needsReview: verdict.needsReview && !conflicting,
+        conflictValues: conflicting ? verdict.conflictValues.filter((item) => item !== value) : [],
       });
     }
   }
@@ -95,6 +121,7 @@ export interface SuggestionRow {
   value: string;
   sourceQuestionIds: string[];
   conflict: boolean;
+  needsReview: boolean;
   conflictValues: string[];
   status: "PENDING" | "ACCEPTED" | "REJECTED";
   reviewedBy: string | null;
@@ -108,6 +135,7 @@ function toRow(row: {
   value: string;
   sourceQuestionIds: unknown;
   conflict: boolean;
+  needsReview: boolean;
   conflictValues: unknown;
   status: string;
   reviewedBy: string | null;
@@ -120,6 +148,7 @@ function toRow(row: {
     value: row.value,
     sourceQuestionIds: Array.isArray(row.sourceQuestionIds) ? (row.sourceQuestionIds as string[]) : [],
     conflict: row.conflict,
+    needsReview: row.needsReview,
     conflictValues: Array.isArray(row.conflictValues) ? (row.conflictValues as string[]) : [],
     status: row.status as SuggestionRow["status"],
     reviewedBy: row.reviewedBy,
@@ -177,6 +206,7 @@ export async function generateSuggestions(
           value: candidate.value,
           sourceQuestionIds: candidate.sourceQuestionIds as unknown as object,
           conflict: candidate.conflict,
+          needsReview: candidate.needsReview,
           conflictValues: candidate.conflictValues as unknown as object,
         },
       });

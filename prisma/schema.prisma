@@ -146,8 +146,10 @@ model ProductFieldSuggestion {
   value      String
   /// Kaynak soru kimlikleri (Trendyol)
   sourceQuestionIds Json
-  /// Aynı alan için çelişen değer var mı?
+  /// Aynı alan için birbirini dışlayan (kesin çelişen) değer var mı?
   conflict   Boolean  @default(false)
+  /// Çelişki yok ama değer belirsiz: insan incelemesi gerekir.
+  needsReview Boolean @default(false)
   conflictValues Json?
   status     SuggestionStatus @default(PENDING)
   reviewedBy String?

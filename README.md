@@ -685,11 +685,59 @@ npx tsx scripts/product-quality.mts --onay --phase baseline   # gerçek 10 soru,
 npx tsx scripts/product-quality.mts --onay --synthetic        # SENTETİK A/B mekanizma kanıtı
 ```
 
-| Ölçüm | RESOLVED | Kaçamak | NEEDS_INFO | Yanlış iddia | Ort. uzunluk |
-| --- | --- | --- | --- | --- | --- |
-| Gerçek 10 soru, doğrulanmış alan **0** | 0/10 | 9 | 0 | 0 | 98 kr |
-| Sentetik A: kart yok | 0/4 | 4 | 0 | 0 | 82 kr |
-| Sentetik B: 2 alan doğrulandı | **4/4 (%100)** | 0 | 0 | 0 | 70 kr |
+| Ölçüm | RESOLVED | GENERIC | Kaçamak cümle | NEEDS_INFO | Yanlış iddia | Ort. uzunluk |
+| --- | --- | --- | --- | --- | --- | --- |
+| Gerçek 10 soru, doğrulanmış alan **0** | 0/10 | 4 | 10 | **6** | 0 | 97 kr |
+| Sentetik A: kart yok | 0/4 | 4 | 4 | 0 | 0 | 82 kr |
+| Sentetik B: 2 alan doğrulandı | **4/4 (%100)** | 0 | 0 | 0 | 0 | 70 kr |
+
+GÖREV 009b sonrası: NEEDS_INFO artık "ürün bilgisi eksik olduğu için cevaplanamıyor" durumunu da kapsıyor
+(6/10), "kontrol edip ileteceğim" gibi kaçamak cevaplar hiçbir koşulda RESOLVED sayılmıyor.
 
 Gerçek veride doğrulanmış alan olmadığı için kalite artışı **iddia edilmiyor**; sentetik A/B yalnızca mekanizmanın
 çalıştığını gösterir. Gerçek artış, `/product-bank` ekranından alanlar doğrulandıktan sonra `--phase after` ile ölçülür.
+
+
+## GÖREV 009b — kalite düzeltmeleri
+
+### Çelişki tespiti düzeltildi
+
+`src/lib/products/value-semantics.ts` değerleri kanonik sınıflara indirger ve yalnızca **aynı ürün + aynı alan +
+birbirini dışlayan değer** durumunu çelişki sayar:
+
+| Durum | Sonuç |
+| --- | --- |
+| "1/3 pile" ↔ "pilesiz dikim" | **CONFLICT** |
+| "özel ölçü yapamıyoruz" ↔ "ölçülerimiz EN × BOY şeklindedir" | COMPATIBLE (biri yetenek, diğeri ölçü yönü) |
+| "özel ölçü yapamıyoruz" ↔ "Evet olur" | REVIEW (insan inceler) |
+| "bambu dokulu tül" ↔ "keten görünümlü polyester" (kumaş) | COMPATIBLE (nominal alan) |
+
+Tek kelimelik/boilerplate cevaplar ("Evet", "Teşekkürler", "Sık sorulan sorular") öneriye dönüşmez.
+Yeniden değerlendirme sonucu: **17 öneri · 0 kesin çelişki · 8 belirsiz (insan incelemesi)**.
+
+### NEEDS_INFO / RESOLVED kuralları
+
+- Soru kategorisinin gerektirdiği doğrulanmış alan yoksa → **NEEDS_INFO** (ör. kumaş sorusunda `fabric` ve
+  `blackout` doğrulanmamışsa). Ölçü içeren sipariş soruları da bu kapsamda.
+- `RESOLVED` yalnızca: gerekli alan doğrulanmış **ve** cevap kaçamak değil **ve** PROMISE/STALE uyarısı yok.
+- "Kontrol edip ileteceğim", "bilgi vereceğim", "değerlendireceğiz" gibi kalıplar `EVASIVE_PATTERNS` ile
+  yakalanır; bu cevaplar onaylansa bile RESOLVED sayılmaz.
+
+### Ürün kartı hazırlığı
+
+`/product-bank` üst bölümünde **öncelikli ilk 3 ürün** kart olarak listelenir (Naturel Keten Fon Perde 26 soru,
+Keten Dokulu Ponponlu Antrasit Fon Perde 20, Paris Keten Tül Perde 11). Kart detayında:
+
+- "Önerilen sıra: kumaş → pile → karartma → özel ölçü → ütü/yıkama → montaj → dikim" yönlendirmesi,
+- o ürünün geçmiş soruları kategori bazında (PII maskeli) — hatırlatıcı, doğrulanmış bilgi değil,
+- alan bazında **Kaydet** ve **Doğrula** ayrı; doğrulama yalnızca sizin tıklamanızla olur.
+
+### Gerçek kalite testi komutu
+
+```bash
+npm run quality:product -- --onay --phase baseline   # mevcut 10 soru, kart öncesi
+npm run quality:product -- --onay --phase after      # alanları doğruladıktan SONRA
+```
+
+`--phase after` doğrulanmış alan yoksa **exit 6** ile durur ve "kalite artışı iddia edilemez" yazar; böylece
+doğrulanmamış veriyle iyileşme raporlanamaz.

@@ -19,7 +19,8 @@
     "live:check": "tsx scripts/live-check.ts",
     "llm:smoke": "tsx scripts/llm-smoke.mts",
     "llm:quality": "tsx scripts/llm-quality-test.mts",
-    "mock:orders": "tsx scripts/mock-orders.ts"
+    "mock:orders": "tsx scripts/mock-orders.ts",
+    "quality:product": "tsx scripts/product-quality.mts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

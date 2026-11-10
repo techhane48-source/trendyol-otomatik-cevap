@@ -44,7 +44,9 @@ async function seedQuestion(
     data: {
       storeId: store.id,
       trendyolQuestionId: 900001n,
-      text: "Nevresim takımının ölçüleri nedir?",
+      // Ürün bilgisi gerektirmeyen kategori: bu dosya onay/revizyon mekaniğini test eder.
+      // Ürün bilgisi eksikliği NEEDS_INFO davranışı product-bank.test.ts içinde test edilir.
+      text: "Siparişim ne zaman kargoya verilir?",
       status: "WAITING_FOR_ANSWER",
       rawStatus: "WAITING_FOR_ANSWER",
       productName: overrides.productName === undefined ? "Nevresim Takımı" : overrides.productName,

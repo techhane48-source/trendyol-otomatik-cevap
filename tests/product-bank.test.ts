@@ -20,6 +20,7 @@ import {
 import { acceptSuggestion, extractFeatureCandidates, generateSuggestions, listSuggestions, rejectSuggestion } from "@/lib/products/suggestions";
 import { disconnectPrisma, getPrisma } from "@/lib/prisma";
 import { createMockProvider } from "@/lib/llm/provider";
+import { compareValues, evaluateGroup } from "@/lib/products/value-semantics";
 
 const prisma = getPrisma();
 const actor = { name: "urun-sorumlusu" };
@@ -211,14 +212,25 @@ describe("geçmiş cevap önerileri", () => {
     expect(candidates[0].value).not.toContain("Efendim");
   });
 
-  it("aynı alanda farklı değerleri çelişki olarak işaretler", () => {
+  it("yalnızca birbirini dışlayan değerleri çelişki sayar", () => {
     const candidates = extractFeatureCandidates([
-      { questionId: "1", trendyolQuestionId: "11", text: "Kumaş şeffaf mı?", answerText: "Şeffaf değildir." },
-      { questionId: "2", trendyolQuestionId: "12", text: "Kumaş şeffaf mı?", answerText: "Hafif şeffaftır." },
+      { questionId: "1", trendyolQuestionId: "11", text: "Pile oranı nedir?", answerText: "1/3 pile ile dikilir." },
+      { questionId: "2", trendyolQuestionId: "12", text: "Pile oranı nedir?", answerText: "Pilesiz dikim yapıyoruz." },
     ]);
 
     expect(candidates.length).toBe(2);
     expect(candidates.every((candidate) => candidate.conflict)).toBe(true);
+    expect(candidates[0].conflictValues.length).toBeGreaterThan(0);
+  });
+
+  it("farklı cümleleri çelişki saymaz (özel ölçü / EN × BOY)", () => {
+    const candidates = extractFeatureCandidates([
+      { questionId: "1", trendyolQuestionId: "11", text: "Özel ölçü olur mu?", answerText: "Maalesef özel ölçü yapamıyoruz." },
+      { questionId: "2", trendyolQuestionId: "12", text: "Ölçü nasıl verilir?", answerText: "Ölçülerimiz EN × BOY şeklindedir." },
+    ]);
+
+    expect(candidates.length).toBe(2);
+    expect(candidates.every((candidate) => candidate.conflict)).toBe(false);
   });
 
   it("öneriyi üretir, kabul eder ama alanı doğrulanmış yapmaz", async () => {
@@ -306,7 +318,9 @@ describe("taslak: doğrulanmış alan ve çözüm sınıfı", () => {
       { prisma, provider: createMockProvider(() => "Bilgiyi kontrol edip ileteceğim.") },
     );
 
-    expect(draft.resolution).toBe("GENERIC");
+    // Ürün sorusu ve doğrulanmış bilgi yok → NEEDS_INFO (kaçamak cevap RESOLVED sayılmaz).
+    expect(draft.resolution).toBe("NEEDS_INFO");
+    expect(draft.status).toBe("NEEDS_INFO");
     expect(draft.usedFacts).toHaveLength(0);
   });
 });
@@ -321,5 +335,47 @@ describe("erişim kapısı", () => {
     } finally {
       if (previous !== undefined) process.env.APP_ACCESS_TOKEN = previous;
     }
+  });
+});
+
+describe("değer semantiği — yanlış çelişki düzeltmesi", () => {
+  it("özel ölçü yapılamaması ile EN × BOY açıklaması çelişmez", () => {
+    expect(compareValues("customSize", "Maalesef özel ölçü yapamıyoruz.", "Ölçülerimiz EN × BOY şeklindedir.")).toBe(
+      "COMPATIBLE",
+    );
+  });
+
+  it("birbirini dışlayan pile değerleri çelişir", () => {
+    expect(compareValues("pleat", "1/3 pile ile dikilir.", "Pilesiz dikim yapılır.")).toBe("CONFLICT");
+    expect(evaluateGroup("pleat", ["1/3 pile", "Pilesiz dikim"]).conflict).toBe(true);
+  });
+
+  it("sınıflandırılamayan farklı cümleleri çelişki değil inceleme sayar", () => {
+    expect(compareValues("customSize", "Özel ölçü yapamıyoruz.", "Evet olur.")).toBe("REVIEW");
+  });
+
+  it("nominal alanlarda (kumaş, renk) farklı tanımlar çelişmez", () => {
+    expect(compareValues("fabric", "Bambu dokulu tül", "Keten görünümlü polyester")).toBe("COMPATIBLE");
+  });
+});
+
+describe("kaçamak cevap RESOLVED sayılmaz", () => {
+  it("doğrulanmış alan olsa da 'kontrol edip ileteceğim' cevabı GENERIC kalır", async () => {
+    const storeId = await seedStore();
+    const questionId = await seedQuestion({ storeId, text: "Kumaş türü nedir?", productId: "VAR-1" });
+    await prisma.productInfo.create({
+      data: { storeId, productMainId: "MAIN-1", productId: null, status: "DRAFT", title: "Test" },
+    });
+    await setField({ storeId, productMainId: "MAIN-1", fieldKey: "fabric", value: "Bambu dokulu tül", actor: "test" }, { prisma });
+    await verifyField({ storeId, productMainId: "MAIN-1", fieldKey: "fabric", actor: "test" }, { prisma });
+
+    const draft = await createAiDraft(
+      { questionId, actor: { name: "test" } },
+      { prisma, provider: createMockProvider(() => "Kontrol edip ileteceğim.") },
+    );
+
+    expect(draft.usedFacts.length).toBeGreaterThan(0);
+    expect(draft.resolution).toBe("GENERIC");
+    expect(draft.resolution).not.toBe("RESOLVED");
   });
 });

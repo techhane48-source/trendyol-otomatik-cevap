@@ -33,6 +33,7 @@ interface Metrics {
   resolved: number;
   generic: number;
   needsInfo: number;
+  genericResolution: number;
   claims: number;
   warnings: number;
   avgLength: number;
@@ -44,6 +45,7 @@ function measure(rows: Array<{ text: string; resolution: string; warnings: numbe
     resolved: rows.filter((row) => row.resolution === "RESOLVED").length,
     generic: rows.filter((row) => GENERIC.some((pattern) => pattern.test(row.text))).length,
     needsInfo: rows.filter((row) => row.resolution === "NEEDS_INFO").length,
+    genericResolution: rows.filter((row) => row.resolution === "GENERIC").length,
     claims: rows.filter((row) => CLAIM.some((pattern) => pattern.test(row.text))).length,
     warnings: rows.reduce((sum, row) => sum + row.warnings, 0),
     avgLength: Math.round(rows.reduce((sum, row) => sum + row.text.length, 0) / (rows.length || 1)),
@@ -54,7 +56,8 @@ function report(title: string, metrics: Metrics): void {
   console.log(`\n${title}`);
   console.log(`  soru            : ${metrics.total}`);
   console.log(`  RESOLVED        : ${metrics.resolved} (%${Math.round((metrics.resolved / (metrics.total || 1)) * 100)})`);
-  console.log(`  kaçamak/genel   : ${metrics.generic}`);
+  console.log(`  GENERIC         : ${metrics.genericResolution}`);
+  console.log(`  kaçamak cümle   : ${metrics.generic} (kaçamak kalıbı içeren cevap; RESOLVED sayılmaz)`);
   console.log(`  NEEDS_INFO      : ${metrics.needsInfo}`);
   console.log(`  yanlış iddia    : ${metrics.claims}`);
   console.log(`  guardrail uyarı : ${metrics.warnings}`);
@@ -153,6 +156,13 @@ async function main(): Promise<void> {
     return sum + attributes.filter((attribute) => attribute.verified === true).length;
   }, 0);
   console.log(`Doğrulanmış alan sayısı (tüm kartlar): ${verifiedTotal} / ${FIELD_DEFS.length} alan × kart`);
+
+  if (phase === "after" && verifiedTotal === 0) {
+    console.error("DURDURULDU: doğrulanmış alan yok. Kalite artışı iddia edilemez.");
+    console.error("Önce /product-bank ekranından alanları doldurup doğrulayın (VERIFIED sizin onayınızla olur).");
+    await prisma.$disconnect();
+    process.exit(6);
+  }
 
   const rows = [];
   for (const question of questions) {

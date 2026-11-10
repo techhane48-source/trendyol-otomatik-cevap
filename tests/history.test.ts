@@ -294,7 +294,9 @@ describe("taslakta geçmiş cevap kullanımı", () => {
 
     expect(draft.historyUsed.length).toBe(1);
     expect(draft.historyUsed[0].reason.length).toBeGreaterThan(0);
-    expect(draft.status).toBe("PENDING");
+    // Doğrulanmış ürün alanı yok: geçmiş cevap referansı tek başına cevap sayılmaz.
+    expect(draft.status).toBe("NEEDS_INFO");
+    expect(draft.resolution).toBe("NEEDS_INFO");
   });
 
   it("geçmiş cevap yoksa hafıza bloğu eklenmez", async () => {
@@ -337,7 +339,8 @@ describe("taslakta geçmiş cevap kullanımı", () => {
     const draft = await createAiDraft({ questionId, actor }, { prisma, provider });
 
     expect(seen[0].system).toContain("güvenilmez");
-    expect(draft.status).toBe("PENDING");
+    // Ürün bilgisi yok: cevap kaçamak/eksik olduğu için doğrudan onaya açılmaz.
+    expect(draft.status).toBe("NEEDS_INFO");
   });
 });
 

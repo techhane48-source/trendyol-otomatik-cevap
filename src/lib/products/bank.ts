@@ -1,5 +1,7 @@
 import { getPrisma } from "@/lib/prisma";
 import type { PrismaClient } from "@/generated/prisma/client";
+import { classifyQuestion, type QuestionCategory } from "@/lib/history/categories";
+import { maskPii } from "@/lib/llm/sanitize";
 
 /**
  * Ürün bilgi bankası: en çok soru gelen ürünler, alan bazında doğrulama, toplu düzenleme,
@@ -126,6 +128,50 @@ export async function listTopProducts(
   }
 
   return products.sort((a, b) => b.questionCount - a.questionCount);
+}
+
+export interface QuestionHint {
+  category: QuestionCategory;
+  text: string;
+  answerText: string | null;
+  askedAt: Date | null;
+}
+
+/**
+ * Kart doldurmayı kolaylaştıran soru ipuçları: aynı ürünün geçmiş soruları,
+ * kategori bazında en yeniler. Metinler PII'den arındırılır; cevaplar "kesin bilgi"
+ * olarak sunulmaz, yalnızca hatırlatıcıdır.
+ */
+export async function getProductQuestionHints(
+  input: { storeId: string; productMainId: string; perCategory?: number },
+  deps: { prisma?: PrismaClient } = {},
+): Promise<QuestionHint[]> {
+  const prisma = deps.prisma ?? getPrisma();
+  const rows = await prisma.question.findMany({
+    where: { storeId: input.storeId, productMainId: input.productMainId },
+    orderBy: { askedAt: "desc" },
+    take: 60,
+    select: { text: true, answerText: true, askedAt: true },
+  });
+
+  const perCategory = Math.min(Math.max(input.perCategory ?? 2, 1), 5);
+  const counts = new Map<QuestionCategory, number>();
+  const hints: QuestionHint[] = [];
+
+  for (const row of rows) {
+    const category = classifyQuestion(row.text);
+    const used = counts.get(category) ?? 0;
+    if (used >= perCategory) continue;
+    counts.set(category, used + 1);
+    hints.push({
+      category,
+      text: maskPii(row.text),
+      answerText: row.answerText ? maskPii(row.answerText) : null,
+      askedAt: row.askedAt,
+    });
+  }
+
+  return hints;
 }
 
 export interface CardFields {

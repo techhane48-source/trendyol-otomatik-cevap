@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
-import { FIELD_DEFS, getCardFields, listTopProducts } from "@/lib/products/bank";
+import { FIELD_DEFS, getCardFields, getProductQuestionHints, listTopProducts } from "@/lib/products/bank";
 import { listSuggestions } from "@/lib/products/suggestions";
 
 import {
@@ -82,6 +82,10 @@ export default async function ProductBankPage({
 
   const selected = params.main ? await getCardFields({ storeId: store.id, productMainId: params.main }, { prisma }) : null;
   const selectedMeta = products.find((product) => product.productMainId === params.main);
+  const hints = params.main
+    ? await getProductQuestionHints({ storeId: store.id, productMainId: params.main, perCategory: 2 }, { prisma })
+    : [];
+  const priority = products.slice(0, 3);
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1250 }}>
@@ -113,7 +117,33 @@ export default async function ProductBankPage({
       ) : null}
 
       <section style={{ marginTop: 18 }}>
-        <h2 style={{ fontSize: 16, marginBottom: 6 }}>En çok soru gelen 10 ürün</h2>
+        <h2 style={{ fontSize: 16, marginBottom: 6 }}>Öncelikli ürünler (ilk 3)</h2>
+        <p style={{ fontSize: 12, opacity: 0.7, marginTop: 0 }}>
+          Bu üç ürün soruların büyük kısmını oluşturuyor. Kartı açıp kumaş, pile, karartma, özel ölçü, yıkama ve montaj
+          alanlarını doldurun; doğrulamayı siz yapın. Alanlar otomatik doğrulanmaz.
+        </p>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {priority.map((product, index) => (
+            <div
+              key={product.productMainId}
+              style={{ flex: "1 1 280px", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}
+            >
+              <div style={{ fontSize: 12, opacity: 0.6 }}>{index + 1}. öncelik · {product.questionCount} soru</div>
+              <div style={{ fontSize: 13.5, margin: "4px 0" }}>{product.productName ?? product.productMainId}</div>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                {product.answeredCount} cevaplı · {product.verifiedFields}/{FIELD_DEFS.length} doğrulanmış alan
+              </div>
+              <a
+                href={`/product-bank?main=${encodeURIComponent(product.productMainId)}#kart`}
+                style={{ display: "inline-block", marginTop: 8, fontSize: 12.5 }}
+              >
+                Kartı doldur →
+              </a>
+            </div>
+          ))}
+        </div>
+
+        <h2 style={{ fontSize: 16, margin: "22px 0 6px" }}>En çok soru gelen 10 ürün</h2>
         {products.length === 0 ? (
           <p style={{ fontSize: 13, opacity: 0.7 }}>Ürün verisi yok (önce soruları senkronize edin).</p>
         ) : (
@@ -179,12 +209,33 @@ export default async function ProductBankPage({
       </section>
 
       {selected ? (
-        <section style={{ marginTop: 26, padding: 14, border: "1px solid var(--border)", borderRadius: 10 }}>
+        <section id="kart" style={{ marginTop: 26, padding: 14, border: "1px solid var(--border)", borderRadius: 10 }}>
           <h2 style={{ fontSize: 16, marginTop: 0 }}>
             {selectedMeta?.productName ?? selected.title ?? "Ürün"} · {selected.productMainId}
           </h2>
           <p style={{ fontSize: 12, opacity: 0.7, marginTop: 0 }}>
             Kart durumu: {selected.status} · eksik/doğrulanmamış alan: {selected.missingFields.length}
+          </p>
+
+          {hints.length > 0 ? (
+            <details style={{ marginBottom: 12 }} open>
+              <summary style={{ cursor: "pointer", fontSize: 13 }}>Bu ürün için geçmiş sorular (doldururken bakın)</summary>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12.5 }}>
+                {hints.slice(0, 8).map((hint, index) => (
+                  <li key={`${hint.category}-${index}`} style={{ marginBottom: 4 }}>
+                    <span style={{ opacity: 0.6 }}>[{hint.category}]</span> {hint.text}
+                    {hint.answerText ? <div style={{ opacity: 0.7 }}>eski cevap: {hint.answerText}</div> : null}
+                  </li>
+                ))}
+              </ul>
+              <p style={{ fontSize: 11.5, opacity: 0.6, marginBottom: 0 }}>
+                Eski cevaplar doğrulanmış bilgi değildir; alanları kendi bilginizle doldurup doğrulayın.
+              </p>
+            </details>
+          ) : null}
+
+          <p style={{ fontSize: 12, opacity: 0.7, marginTop: 0 }}>
+            Önerilen sıra: kumaş türü → pile oranı → karartma → özel ölçü → ütü/yıkama → montaj → dikim şekli.
           </p>
 
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -293,6 +344,8 @@ export default async function ProductBankPage({
                   <td style={cellStyle}>
                     {suggestion.conflict ? (
                       <span style={{ color: "#7f1d1d" }}>var: {suggestion.conflictValues.join(" | ").slice(0, 90)}</span>
+                    ) : suggestion.needsReview ? (
+                      <span style={{ color: "#7c4a03" }}>belirsiz — insan incelemesi</span>
                     ) : (
                       "—"
                     )}

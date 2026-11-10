@@ -15,6 +15,39 @@ import { buildOrderGuidance, detectOrderClaimViolations, type OrderChangeState }
 import { isUsableForDraft, matchProductInfo } from "@/lib/products/matching";
 import { findProductInfoForQuestion, type ProductAttribute } from "@/lib/products/service";
 import { FIELD_DEFS, verifiedAttributes } from "@/lib/products/bank";
+import { classifyQuestion, type QuestionCategory } from "@/lib/history/categories";
+
+/** Soru kategorisinin gerektirdiği doğrulanmış ürün alanları. */
+const CATEGORY_FIELDS: Partial<Record<QuestionCategory, Array<(typeof FIELD_DEFS)[number]["key"]>>> = {
+  FABRIC: ["fabric", "blackout"],
+  PLEAT: ["pleat", "sewing"],
+  MEASURE: ["customSize", "description"],
+  COLOR: ["colors"],
+  WASH: ["care"],
+  MOUNT: ["mounting"],
+};
+
+/** Ürün bilgisiyle cevaplanması gereken kategoriler. */
+const PRODUCT_CATEGORIES: QuestionCategory[] = ["FABRIC", "PLEAT", "MEASURE", "COLOR", "WASH", "MOUNT", "OTHER"];
+
+/** Sipariş sorusu ölçü içeriyorsa ürün bilgisi gerekir (ör. "300 en 240 boy için hangi ölçüyü seçmeliyim"). */
+const ORDER_WITH_MEASURE = /öl[çc][üu]|\d{2,4}\s*[x×-]\s*\d{2,4}/i;
+
+/** "Kontrol edip ileteceğim" gibi kaçamak cevaplar RESOLVED sayılmaz. */
+export const EVASIVE_PATTERNS: RegExp[] = [
+  /kontrol edip/i,
+  /kontrol edece/i,
+  /bilgi verece/i,
+  /iletece[ğg]im/i,
+  /iletece[ğg]iz/i,
+  /de[ğg]erlendirece[ğg]iz/i,
+  /d[öo]n[üu][şs] yapaca/i,
+  /ara[şs]t[ıi]r[ıi]p/i,
+];
+
+export function isEvasiveAnswer(text: string): boolean {
+  return EVASIVE_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 /**
  * Taslak (AI önerisi + insan onayı) servisi.
@@ -232,6 +265,7 @@ export async function createAiDraft(
   // Yalnızca doğrulanmış (VERIFIED) ve kesin eşleşen kart kullanılır.
   let matchedProductId: string | null = null;
   let cardFacts: ProductAttribute[] = [];
+  let verifiedFieldKeys = new Set<string>();
 
   if (match.kind === "EXACT_VARIANT" || match.kind === "MAIN_PRODUCT") {
     const card = candidates.find((candidate) => candidate.id === match.product.id);
@@ -242,6 +276,9 @@ export async function createAiDraft(
     if (isUsableForDraft(match) || verified.length > 0) {
       matchedProductId = match.product.id;
       cardFacts = verified.map((attribute) => ({ label: attribute.label, value: attribute.value }));
+      verifiedFieldKeys = new Set(
+        verified.map((attribute) => attribute.key ?? FIELD_DEFS.find((field) => field.label === attribute.label)?.key ?? ""),
+      );
     }
   }
 
@@ -400,23 +437,48 @@ export async function createAiDraft(
     missingInfo.push("Soru metninde talimat benzeri ifade tespit edildi; güvenilmeyen veri olarak işlendi.");
   }
 
+  // Soru kategorisi ve gereken doğrulanmış alanlar (çözüm sınıfı için).
+  const questionCategory = classifyQuestion(sanitized.text);
+  const requiredFields = CATEGORY_FIELDS[questionCategory] ?? [];
+  const coverage =
+    requiredFields.length > 0 ? requiredFields.filter((field) => verifiedFieldKeys.has(field)) : [...verifiedFieldKeys];
+  const productQuestion =
+    PRODUCT_CATEGORIES.includes(questionCategory) ||
+    (questionCategory === "ORDER" && ORDER_WITH_MEASURE.test(sanitized.text));
+
   // Doğrulanmış bilgi yokken KESİN VAAT (PROMISE) üretildiyse taslak onaya açılmaz:
   // NEEDS_INFO, insan müdahalesi (düzenleme) gerektiğini açıkça gösterir. Sıradan
   // ölçü/malzeme uyarıları mevcut "uyarıyı kabul et" akışıyla onaylanabilir kalır.
   const hasUnverifiedPromise =
     warnings.some((warning) => warning.kind === "PROMISE") ||
     (orderViolations.length > 0 && orderState.kind !== "APPROVED");
-  const needsInfo = (hasUnverifiedPromise && usedFacts.length === 0) || historyUsage.blocksApproval;
+  const needsInfo =
+    (hasUnverifiedPromise && usedFacts.length === 0) ||
+    historyUsage.blocksApproval ||
+    (productQuestion && coverage.length === 0);
   const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
 
-  // Çözüm sınıfı: doğrulanmış bilgiyle ve vaat/uyarı olmadan cevaplandıysa RESOLVED.
+  // Çözüm sınıfı:
+  // - RESOLVED: sorunun kategorisi için doğrulanmış alan var, cevap kaçamak değil, vaat yok.
+  // - NEEDS_INFO: ürün sorusu ama gerekli doğrulanmış alan yok → cevap üretilemiyor.
+  // - GENERIC: ürün dışı (sipariş/kargo/iade) veya kısmi bağlam.
+  const evasive = isEvasiveAnswer(text);
   const blockingWarnings = warnings.filter((warning) => warning.kind === "PROMISE" || warning.kind === "STALE");
+
+  const missingForQuestion = productQuestion && coverage.length === 0;
   const resolution: "RESOLVED" | "NEEDS_INFO" | "GENERIC" =
-    draftStatus === "NEEDS_INFO"
+    draftStatus === "NEEDS_INFO" || missingForQuestion
       ? "NEEDS_INFO"
-      : usedFacts.length > 0 && blockingWarnings.length === 0
+      : coverage.length > 0 && !evasive && blockingWarnings.length === 0
         ? "RESOLVED"
         : "GENERIC";
+
+  if (productQuestion && coverage.length === 0) {
+    const labels = (requiredFields.length > 0 ? requiredFields : ["fabric"]).map(
+      (key) => FIELD_DEFS.find((field) => field.key === key)?.label ?? key,
+    );
+    missingInfo.push(`Bu soru için doğrulanmış bilgi yok: ${labels.join(", ")}.`);
+  }
 
   const draft = await prisma.$transaction(async (tx) => {
     const last = await tx.answerDraft.findFirst({
