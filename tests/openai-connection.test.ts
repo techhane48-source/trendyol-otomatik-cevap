@@ -184,3 +184,31 @@ describe("bütçe koruması", () => {
     ).toBe(0);
   });
 });
+
+describe("geçit oturum başlığı", () => {
+  it("sessionHeader tanımlıysa istek başlığına eklenir", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(okResponse({ message: { content: "cevap" } })) as unknown as typeof fetch;
+    await providerWith(fetchImpl, { sessionHeader: "x-opencode-session", sessionId: "test-oturum" }).complete(messages);
+
+    const init = (fetchImpl as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)["x-opencode-session"]).toBe("test-oturum");
+  });
+
+  it("sessionId verilmezse rastgele üretir, başlık boş kalmaz", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(okResponse({ message: { content: "cevap" } })) as unknown as typeof fetch;
+    await providerWith(fetchImpl, { sessionHeader: "x-opencode-session" }).complete(messages);
+
+    const init = (fetchImpl as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1] as RequestInit;
+    const value = (init.headers as Record<string, string>)["x-opencode-session"];
+    expect(typeof value).toBe("string");
+    expect((value ?? "").length).toBeGreaterThan(8);
+  });
+
+  it("sessionHeader tanımlı değilse ek başlık gönderilmez", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(okResponse({ message: { content: "cevap" } })) as unknown as typeof fetch;
+    await providerWith(fetchImpl).complete(messages);
+
+    const init = (fetchImpl as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)["x-opencode-session"]).toBeUndefined();
+  });
+});

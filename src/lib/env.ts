@@ -81,6 +81,13 @@ const envSchema = z.object({
   LLM_MAX_COST_USD: z.coerce.number().min(0).max(1_000).default(2),
   /** Tek çağrılık smoke testi için üst maliyet sınırı (USD). */
   LLM_SMOKE_MAX_COST_USD: z.coerce.number().min(0).max(10).default(0.05),
+  /**
+   * Bazı OpenAI-uyumlu geçitler oturum başlığı ister (ör. OpenCode Go:
+   * `x-opencode-session`). Tanımlıysa her isteğe eklenir; kimlik bilgisi taşımaz.
+   */
+  LLM_SESSION_HEADER: z.string().trim().max(64).optional(),
+  /** Oturum başlığının değeri; verilmezse çalışma başına rastgele üretilir. */
+  LLM_SESSION_ID: z.string().trim().max(128).optional(),
 
   /** Onaylayan/reddeden kişinin adı (tek kiracılı kurulumda kimlik yerine geçer). */
   ADMIN_ACTOR_NAME: z.string().trim().min(1).default("admin"),

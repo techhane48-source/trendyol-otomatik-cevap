@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { AppEnv } from "@/lib/env";
 import { getEnv } from "@/lib/env";
 
@@ -37,6 +39,9 @@ export interface OpenAiCompatibleOptions {
   retryBaseMs?: number;
   /** OpenAI `store` bayrağı; varsayılan false (istek saklanmaz). */
   store?: boolean;
+  /** Geçit oturum başlığı (ör. OpenCode Go: x-opencode-session). */
+  sessionHeader?: string;
+  sessionId?: string;
   promptVersion?: string;
   /** Testlerde enjekte edilir. */
   fetchImpl?: typeof fetch;
@@ -141,6 +146,8 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
   const retryBaseMs = options.retryBaseMs ?? 400;
   const promptVersion = options.promptVersion ?? PROMPT_VERSION;
   const endpoint = `${normalizeBaseUrl(options.baseUrl)}/chat/completions`;
+  const sessionHeader = options.sessionHeader?.trim() || null;
+  const sessionId = options.sessionId?.trim() || (sessionHeader ? `hermes-${randomUUID()}` : null);
 
   async function attempt(
     messages: LlmMessage,
@@ -154,6 +161,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${options.apiKey}`,
+          ...(sessionHeader && sessionId ? { [sessionHeader]: sessionId } : {}),
         },
         body: JSON.stringify(buildRequestBody(options, messages)),
         signal: controller.signal,
@@ -328,6 +336,8 @@ export function createLlmProvider(env: AppEnv = getEnv()): LlmProvider {
     maxRetries: env.LLM_MAX_RETRIES,
     retryBaseMs: env.LLM_RETRY_BASE_MS,
     store: env.LLM_STORE,
+    sessionHeader: env.LLM_SESSION_HEADER,
+    sessionId: env.LLM_SESSION_ID,
     promptVersion: env.LLM_PROMPT_VERSION,
   });
 }

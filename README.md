@@ -473,3 +473,19 @@ Test yalnızca ölçüm yapar: taslak oluşturmaz, onaylamaz, Trendyol'a istek g
 Canlı test çıktısı tek başına "kalite başarılı" anlamına gelmez. Her cevap için doğruluk, ürün bilgisine bağlılık,
 Türkçe üslup (1–5), vaat/uydurma, eksik bilgi, insan düzenlemesi ve **KABUL / DÜZENLE / REDDET** kararı insan
 tarafından verilir. Kalıcı kayıt ve puanlama `/quality` ekranından yapılır.
+
+### OpenAI uyumlu geçitler (ör. OpenCode Go)
+
+`gpt-4o-mini` gibi modeller her geçitte bulunmayabilir; geçidin `/v1/models` listesinden gerçek model adı seçilmelidir.
+Bazı geçitler oturum başlığı zorunlu tutar (`MissingSessionID` hatası):
+
+```
+LLM_BASE_URL=https://opencode.ai/zen/go/v1
+LLM_MODEL=gpt-5.6-luna
+LLM_SESSION_HEADER=x-opencode-session
+# LLM_SESSION_ID boş bırakılırsa çalışma başına rastgele üretilir
+LLM_INPUT_COST_PER_1K=0.0002    # 0,20 USD / 1M girdi
+LLM_OUTPUT_COST_PER_1K=0.0012   # 1,20 USD / 1M çıktı
+```
+
+Fiyat, geçidin `/v1/models` yanıtındaki `cost` alanından okunup 1K token'a çevrilir; sabit varsayım yapılmaz.
