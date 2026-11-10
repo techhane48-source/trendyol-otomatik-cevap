@@ -426,3 +426,50 @@ mesajıyla durur. Ana ürün kartına varyantlar arasında farklılaşan özelli
 bozuk JSON/boş yanıt, usage ayrıştırma ve maliyet, PII maskeleme, prompt injection, vaat tespiti, `NEEDS_INFO`,
 kullanım/başarısız çağrı kaydı, kalite koşusu ve puanlama, yetkisiz erişim, tekrar çalıştırma, NULL `productId`
 benzersizlik ve ana ürün kartı çakışması.
+
+## OpenAI canlı bağlantı ve canlı kalite testi (GÖREV 006)
+
+### Yapılandırma
+
+`.env` (asla commit edilmez):
+
+```
+LLM_PROVIDER=openai-compatible
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=...            # yalnızca .env
+LLM_MODEL=gpt-4o-mini
+LLM_MAX_TOKENS=400
+LLM_TEMPERATURE=0.2
+LLM_STORE=false            # istek sağlayıcıda saklanmaz
+LLM_INPUT_COST_PER_1K=...  # gerçek fiyat tarifeniz
+LLM_OUTPUT_COST_PER_1K=...
+LLM_MAX_COST_USD=2         # toplu test bütçe üst sınırı
+LLM_SMOKE_MAX_COST_USD=0.05
+```
+
+URL normalizasyonu: sonda `/chat/completions` varsa kaldırılır, tekrarlanmış `/v1/v1` düzeltilir —
+uç nokta hiçbir zaman `/v1/v1/chat/completions` olmaz. Model uyumluluğu: `o*`/`gpt-5*` muhakeme modellerinde
+`max_completion_tokens` kullanılır ve `temperature` gönderilmez; diğer modellerde `max_tokens` + kırpılmış
+`temperature` (0–2).
+
+Yanıt durumları güvenli işlenir: `finish_reason=length` → `TRUNCATED` (taslak kaydedilmez),
+`content_filter` → `CONTENT_FILTER`, `message.refusal` dolu → `REFUSAL`, boş içerik → `EMPTY_RESPONSE`.
+`usage.prompt_tokens/completion_tokens/total_tokens` gerçek değerleriyle kaydedilir; alan yoksa tahmin + `estimated=true`.
+
+### Komutlar
+
+| Komut | Ne yapar | Ücret |
+| --- | --- | --- |
+| `npm run llm:smoke` | Tek çağrılık bağlantı testi; plan + tahmini üst maliyet yazdırır, sonucu `llm_usages`'a (`purpose=smoke`) kaydeder | 1 istek |
+| `npm run llm:quality -- --onay` | 10 gerçek soruda canlı kalite testi; `--onay` yoksa **çalışmaz** | ≤10 istek, `LLM_MAX_COST_USD` sınırı |
+
+Canlı test korumaları: anahtar yoksa istek atılmaz (exit 3), onay bayrağı yoksa çalışmaz (exit 4),
+fiyat tarifesi 0 ise ücretli toplu test başlamaz (exit 5), tahmini maliyet bütçeyi aşarsa başlamaz,
+her soru için en fazla bir çağrı (sağlayıcı tekrarı kapalı), bütçe dolunca döngü durur.
+Test yalnızca ölçüm yapar: taslak oluşturmaz, onaylamaz, Trendyol'a istek göndermez; soru metinleri PII'den arındırılır.
+
+### İnsan değerlendirmesi
+
+Canlı test çıktısı tek başına "kalite başarılı" anlamına gelmez. Her cevap için doğruluk, ürün bilgisine bağlılık,
+Türkçe üslup (1–5), vaat/uydurma, eksik bilgi, insan düzenlemesi ve **KABUL / DÜZENLE / REDDET** kararı insan
+tarafından verilir. Kalıcı kayıt ve puanlama `/quality` ekranından yapılır.

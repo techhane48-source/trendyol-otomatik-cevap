@@ -16,7 +16,9 @@
     "db:studio": "prisma studio",
     "pg:dev": "tsx scripts/dev-postgres.ts",
     "mock:trendyol": "tsx scripts/mock-trendyol.ts",
-    "live:check": "tsx scripts/live-check.ts"
+    "live:check": "tsx scripts/live-check.ts",
+    "llm:smoke": "tsx scripts/llm-smoke.mts",
+    "llm:quality": "tsx scripts/llm-quality-test.mts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

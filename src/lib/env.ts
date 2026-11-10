@@ -72,6 +72,15 @@ const envSchema = z.object({
    */
   LLM_INPUT_COST_PER_1K: z.coerce.number().min(0).max(1_000).default(0),
   LLM_OUTPUT_COST_PER_1K: z.coerce.number().min(0).max(1_000).default(0),
+  /** OpenAI `store` bayrağı: test ve üretim çağrılarında varsayılan olarak kapalı. */
+  LLM_STORE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  /** Tek bir toplu kalite testi için üst maliyet sınırı (USD). */
+  LLM_MAX_COST_USD: z.coerce.number().min(0).max(1_000).default(2),
+  /** Tek çağrılık smoke testi için üst maliyet sınırı (USD). */
+  LLM_SMOKE_MAX_COST_USD: z.coerce.number().min(0).max(10).default(0.05),
 
   /** Onaylayan/reddeden kişinin adı (tek kiracılı kurulumda kimlik yerine geçer). */
   ADMIN_ACTOR_NAME: z.string().trim().min(1).default("admin"),

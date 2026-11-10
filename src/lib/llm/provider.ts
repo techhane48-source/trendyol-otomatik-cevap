@@ -35,6 +35,8 @@ export interface OpenAiCompatibleOptions {
   temperature: number;
   maxRetries?: number;
   retryBaseMs?: number;
+  /** OpenAI `store` bayrağı; varsayılan false (istek saklanmaz). */
+  store?: boolean;
   promptVersion?: string;
   /** Testlerde enjekte edilir. */
   fetchImpl?: typeof fetch;
@@ -43,7 +45,11 @@ export interface OpenAiCompatibleOptions {
 }
 
 interface ChatCompletionResponse {
-  choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
+  choices?: Array<{
+    message?: { content?: unknown; refusal?: unknown };
+    text?: unknown;
+    finish_reason?: unknown;
+  }>;
   model?: string;
   usage?: unknown;
 }
@@ -51,6 +57,29 @@ interface ChatCompletionResponse {
 type RetryMeta = { retryable?: boolean; retryAfter?: number | null };
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+/**
+ * Base URL normalizasyonu: sonda `/chat/completions` varsa kaldırılır,
+ * tekrarlanmış `/v1/v1` düzeltilir, sonda `/` bırakılmaz. Böylece URL
+ * iki kez `/v1` içermez ve yol iki kez eklenmez.
+ */
+export function normalizeBaseUrl(raw: string): string {
+  let url = (raw ?? "").trim();
+  url = url.replace(/\/+$/, "");
+  url = url.replace(/\/chat\/completions$/i, "");
+  url = url.replace(/\/v1\/v1(?=\/|$)/gi, "/v1");
+  return url.replace(/\/+$/, "");
+}
+
+/** Muhakeme (reasoning) modelleri `max_tokens` ve `temperature` kabul etmez. */
+export function isReasoningModel(model: string): boolean {
+  return /^(?:o[1-9]|gpt-5)/i.test((model ?? "").trim());
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,13 +92,39 @@ function retryAfterMs(response: Response): number | null {
   return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds * 1_000, 5_000) : null;
 }
 
+/** İstek gövdesi: model yeteneklerine göre parametreler seçilir. */
+export function buildRequestBody(
+  options: Pick<OpenAiCompatibleOptions, "model" | "maxTokens" | "temperature" | "store">,
+  messages: LlmMessage,
+): Record<string, unknown> {
+  const reasoning = isReasoningModel(options.model);
+  const body: Record<string, unknown> = {
+    model: options.model,
+    store: options.store ?? false,
+    messages: [
+      { role: "system", content: messages.system },
+      { role: "user", content: messages.user },
+    ],
+  };
+
+  if (reasoning) {
+    // Muhakeme modelleri: `temperature` gönderilmez, `max_tokens` yerine `max_completion_tokens`.
+    body.max_completion_tokens = options.maxTokens;
+  } else {
+    body.temperature = clamp(options.temperature, 0, 2);
+    body.max_tokens = options.maxTokens;
+  }
+
+  return body;
+}
+
 export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions): LlmProvider {
   const doFetch = options.fetchImpl ?? fetch;
   const sleep = options.sleepImpl ?? defaultSleep;
   const maxRetries = options.maxRetries ?? 1;
   const retryBaseMs = options.retryBaseMs ?? 400;
   const promptVersion = options.promptVersion ?? PROMPT_VERSION;
-  const endpoint = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  const endpoint = `${normalizeBaseUrl(options.baseUrl)}/chat/completions`;
 
   async function attempt(messages: LlmMessage): Promise<{ text: string; model: string; usage: LlmUsageInfo }> {
     const controller = new AbortController();
@@ -82,15 +137,7 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
           "content-type": "application/json",
           authorization: `Bearer ${options.apiKey}`,
         },
-        body: JSON.stringify({
-          model: options.model,
-          temperature: options.temperature,
-          max_tokens: options.maxTokens,
-          messages: [
-            { role: "system", content: messages.system },
-            { role: "user", content: messages.user },
-          ],
-        }),
+        body: JSON.stringify(buildRequestBody(options, messages)),
         signal: controller.signal,
       });
 
@@ -112,7 +159,24 @@ export function createOpenAiCompatibleProvider(options: OpenAiCompatibleOptions)
         throw new LlmRequestError("INVALID_JSON", "LLM yanıtı geçerli JSON değil.");
       }
 
-      const content = payload.choices?.[0]?.message?.content ?? payload.choices?.[0]?.text;
+      const choice = payload.choices?.[0];
+      const refusal = (choice?.message as { refusal?: unknown } | undefined)?.refusal;
+      if (typeof refusal === "string" && refusal.trim().length > 0) {
+        throw new LlmRequestError("REFUSAL", "Model isteği güvenlik gerekçesiyle reddetti.");
+      }
+
+      const finishReason = (payload.choices?.[0] as { finish_reason?: unknown } | undefined)?.finish_reason;
+      if (finishReason === "length") {
+        throw new LlmRequestError(
+          "TRUNCATED",
+          "Model yanıtı token sınırında kesildi (finish_reason=length). Taslak kaydedilmedi.",
+        );
+      }
+      if (finishReason === "content_filter") {
+        throw new LlmRequestError("CONTENT_FILTER", "Yanıt içerik filtresine takıldı.");
+      }
+
+      const content = choice?.message?.content ?? choice?.text;
       const text = typeof content === "string" ? content.trim() : "";
 
       if (text.length === 0) {
@@ -239,6 +303,7 @@ export function createLlmProvider(env: AppEnv = getEnv()): LlmProvider {
     temperature: env.LLM_TEMPERATURE,
     maxRetries: env.LLM_MAX_RETRIES,
     retryBaseMs: env.LLM_RETRY_BASE_MS,
+    store: env.LLM_STORE,
     promptVersion: env.LLM_PROMPT_VERSION,
   });
 }
