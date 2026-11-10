@@ -8,6 +8,7 @@ import {
   setField,
 } from "./bank";
 import { compareValues } from "./value-semantics";
+import { classifyCandidate, type Verdict } from "./verdict";
 import { extractFromCatalog, type CatalogCandidate } from "./catalog-extract";
 import type { CatalogProductDto } from "@/lib/trendyol/catalog-client";
 
@@ -32,6 +33,9 @@ export interface AutoFillField {
   alternatives: string[];
   needsReview: boolean;
   verified: boolean;
+  /** Güven sınıfı: GÜVENİLİR / İNCELEME / RED (GÖREV 010B). */
+  verdict: Verdict;
+  verdictReasons: string[];
   /** "FILLED" yeni dolduruldu · "KEPT" doğrulanmış korundu · "REVIEW" inceleme gerekir · "EMPTY" bilgi yok */
   state: "FILLED" | "KEPT" | "REVIEW" | "EMPTY";
 }
@@ -46,6 +50,8 @@ export interface AutoFillPlan {
   filledCount: number;
   reviewCount: number;
   missingCount: number;
+  trustedCount: number;
+  rejectedCount: number;
 }
 
 function parseCardAttributes(value: unknown): BankAttribute[] {
@@ -142,6 +148,8 @@ export async function buildAutoFillPlan(
           alternatives: [],
           needsReview: false,
           verified: true,
+          verdict: "TRUSTED",
+          verdictReasons: ["İnsan tarafından doğrulandı"],
           state: "KEPT",
         });
         continue;
@@ -182,6 +190,20 @@ export async function buildAutoFillPlan(
         needsReview = true;
       }
 
+      const classification = classifyCandidate({
+        fieldKey: def.key,
+        value,
+        source,
+        confidence,
+        alternatives: [...alternatives],
+        needsReview,
+        // Eşleşme yalnızca productMainId üzerinden yapıldı; farklı ana ürün birleştirilmez.
+        identityMatched: items.length > 0,
+        truncated: row.truncated,
+        variantCount: row.variantCount,
+        categoryName: row.categoryName,
+      });
+
       fields.push({
         key: def.key,
         label: def.label,
@@ -192,7 +214,9 @@ export async function buildAutoFillPlan(
         alternatives: [...alternatives].slice(0, 3),
         needsReview,
         verified: false,
-        state: !value ? "EMPTY" : needsReview ? "REVIEW" : "FILLED",
+        verdict: value ? classification.verdict : "REVIEW",
+        verdictReasons: value ? classification.reasons : ["Değer yok"],
+        state: !value ? "EMPTY" : classification.verdict === "TRUSTED" ? "FILLED" : "REVIEW",
       });
     }
 
@@ -206,6 +230,8 @@ export async function buildAutoFillPlan(
       filledCount: fields.filter((field) => field.state === "FILLED").length,
       reviewCount: fields.filter((field) => field.state === "REVIEW").length,
       missingCount: fields.filter((field) => field.state === "EMPTY").length,
+      trustedCount: fields.filter((field) => field.verdict === "TRUSTED").length,
+      rejectedCount: fields.filter((field) => field.verdict === "REJECT").length,
     });
   }
 
@@ -285,8 +311,8 @@ export async function applyAutoFill(
       );
       await prisma.productInfo.update({ where: { id: updatedCard.id }, data: { attributes: attributes as unknown as object } });
 
-      if (field.state === "REVIEW") review += 1;
-      else filled += 1;
+      if (field.verdict === "TRUSTED") filled += 1;
+      else review += 1;
     }
   }
 
@@ -315,7 +341,7 @@ export async function approveAutoFilled(
   const next = attributes.map((item) => {
     if (item.verified === true) return item;
     const source = item.source ?? "MANUAL";
-    const isCatalog = source === "CATALOG_ATTRIBUTE" || source === "CATALOG_DESCRIPTION";
+    const isCatalog = source === "CATALOG_ATTRIBUTE";
     const isHistory = source === "HISTORY_ANSWER";
     if (item.needsReview === true) {
       skipped += 1;
@@ -350,6 +376,8 @@ export function summarizePlan(plans: AutoFillPlan[]): {
   review: number;
   missing: number;
   verifiedKept: number;
+  trusted: number;
+  rejected: number;
 } {
   return {
     products: plans.length,
@@ -357,7 +385,137 @@ export function summarizePlan(plans: AutoFillPlan[]): {
     review: plans.reduce((sum, plan) => sum + plan.reviewCount, 0),
     missing: plans.reduce((sum, plan) => sum + plan.missingCount, 0),
     verifiedKept: plans.reduce((sum, plan) => sum + plan.fields.filter((field) => field.state === "KEPT").length, 0),
+    trusted: plans.reduce((sum, plan) => sum + plan.trustedCount, 0),
+    rejected: plans.reduce((sum, plan) => sum + plan.rejectedCount, 0),
   };
+}
+
+export interface BulkVerifyItem {
+  productMainId: string;
+  fieldKey: string;
+  value: string;
+}
+
+export interface BulkVerifyResult {
+  verified: number;
+  skipped: number;
+  alreadyVerified: number;
+  /** Atlananların gerekçeleri (ilk 20). */
+  skippedReasons: Array<{ productMainId: string; fieldKey: string; reason: string }>;
+}
+
+/**
+ * Seçilen alanları TEK işlemde doğrular.
+ *
+ * Güvenlik kuralları:
+ * - Yalnızca `TRUSTED` sınıfındaki alanlar doğrulanır; istemciden gelen değer planla birebir eşleşmelidir.
+ * - İnceleme/red sınıfı, geçmiş cevap kaynaklı veya değişmiş değerler atlanır.
+ * - Zaten doğrulanmış alan yeniden doğrulanmaz (idempotent).
+ */
+export async function verifySelectedFields(
+  input: { storeId: string; actor: string; items: BulkVerifyItem[] },
+  deps: { prisma?: PrismaClient } = {},
+): Promise<BulkVerifyResult> {
+  const prisma = deps.prisma ?? getPrisma();
+  const result: BulkVerifyResult = { verified: 0, skipped: 0, alreadyVerified: 0, skippedReasons: [] };
+
+  const byProduct = new Map<string, BulkVerifyItem[]>();
+  for (const item of input.items) {
+    const list = byProduct.get(item.productMainId) ?? [];
+    list.push(item);
+    byProduct.set(item.productMainId, list);
+  }
+
+  for (const [productMainId, items] of byProduct) {
+    const plans = await buildAutoFillPlan({ storeId: input.storeId, productMainId }, { prisma });
+    const plan = plans[0];
+    if (!plan) {
+      for (const item of items) {
+        result.skipped += 1;
+        result.skippedReasons.push({ productMainId, fieldKey: item.fieldKey, reason: "Ürün planı yok" });
+      }
+      continue;
+    }
+
+    const card = await prisma.productInfo.findFirst({
+      where: { storeId: input.storeId, productMainId, productId: null },
+    });
+    if (!card) {
+      for (const item of items) {
+        result.skipped += 1;
+        result.skippedReasons.push({ productMainId, fieldKey: item.fieldKey, reason: "Kart yok" });
+      }
+      continue;
+    }
+
+    const attributes = parseCardAttributes(card.attributes);
+    let changed = false;
+
+    for (const item of items) {
+      const planned = plan.fields.find((field) => field.key === item.fieldKey);
+      const stored = attributes.find((attribute) => attribute.key === item.fieldKey);
+
+      if (!planned) {
+        result.skipped += 1;
+        result.skippedReasons.push({ productMainId, fieldKey: item.fieldKey, reason: "Alan planı yok" });
+        continue;
+      }
+      if (stored?.verified === true) {
+        result.alreadyVerified += 1;
+        continue;
+      }
+      if (planned.verdict !== "TRUSTED") {
+        result.skipped += 1;
+        result.skippedReasons.push({ productMainId, fieldKey: item.fieldKey, reason: `Güven sınıfı: ${planned.verdict}` });
+        continue;
+      }
+      if ((planned.value ?? "") !== item.value.trim()) {
+        result.skipped += 1;
+        result.skippedReasons.push({ productMainId, fieldKey: item.fieldKey, reason: "Değer planla eşleşmiyor (değişmiş olabilir)" });
+        continue;
+      }
+
+      const index = attributes.findIndex((attribute) => attribute.key === item.fieldKey);
+      if (index < 0) {
+        result.skipped += 1;
+        result.skippedReasons.push({ productMainId, fieldKey: item.fieldKey, reason: "Kartta alan yok" });
+        continue;
+      }
+
+      attributes[index] = {
+        ...attributes[index],
+        value: planned.value ?? attributes[index].value,
+        verified: true,
+        verifiedBy: input.actor,
+        verifiedAt: new Date().toISOString(),
+        source: planned.source ?? attributes[index].source,
+        confidence: planned.confidence ?? attributes[index].confidence,
+        evidence: planned.evidence ?? attributes[index].evidence,
+        needsReview: false,
+      };
+      changed = true;
+      result.verified += 1;
+    }
+
+    if (changed) {
+      await prisma.productInfo.update({
+        where: { id: card.id },
+        data: {
+          attributes: attributes as unknown as object,
+          status: attributes
+            .filter((attribute) => isFieldKey(attribute.key))
+            .every((attribute) => attribute.verified === true)
+            ? "VERIFIED"
+            : "DRAFT",
+          verifiedBy: input.actor,
+          verifiedAt: new Date(),
+        },
+      });
+    }
+  }
+
+  result.skippedReasons = result.skippedReasons.slice(0, 20);
+  return result;
 }
 
 /** Alan etiketi (UI için). */

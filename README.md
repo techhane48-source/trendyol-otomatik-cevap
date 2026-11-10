@@ -795,3 +795,42 @@ npx tsx scripts/catalog-sync.mts --approve  # katalogdan gelen, inceleme istemey
 
 Boş kalan alanlar katalogda karşılığı olmayan özelliklerdir (ör. kurşunlu etek, montaj); bunlar için geçmiş cevap
 önerileri ya da elle giriş gerekir.
+
+## GÖREV 010B — güven sınıflandırması ve toplu onay
+
+### Güven sınıfları (`src/lib/products/verdict.ts`)
+
+| Sınıf | Koşul |
+| --- | --- |
+| **GÜVENİLİR** | Kaynak `CATALOG_ATTRIBUTE` + güven HIGH + ürün kimliği eşleşti + tüm varyantlarda tek değer + sayfalama sınırı yok + çelişki yok |
+| **İNCELEME** | Açıklamadan çıkarıldı, MEDIUM/LOW güven, varyantlar arasında farklılık, sayfa sınırı, geçmiş satıcı cevabı, kimlik doğrulanamadı |
+| **RED** | Kategori/ürün tipi adı ("Tül Perde"), kod benzeri değer ("T100", "Type 1"), alanla ilgisiz değer, boş |
+
+Ek kurallar: `KATALOG/HIGH` tek başına doğrulanmış sayılmaz. Geçmiş satıcı cevabı hiçbir zaman güvenilir aday değildir.
+Alan bazlı anlam kontrolü vardır: "Ütü / yıkama = Type 1" veya "Montaj = Arkada kalıyor" RED alır.
+
+### Toplu onay
+
+`/product-bank` üst bölümü: **Güvenilir adaylar — toplu onay**.
+
+1. Satırlar ürün → özellik → değer → kaynak → güven olarak listelenir; en çok soru gelen ürünler üstte.
+2. Kutucuklarla seçim yapılır; buton üzerinde **kaç aday seçilebilir** yazar ("Seçilenleri Doğrula (N aday)").
+3. "Tüm güvenilir adayları doğrula" tek tıkla hepsini işler (sunucu listeyi yeniden hesaplar).
+4. Sunucu her satırı yeniden sınıflandırır: GÜVENİLİR olmayan, değeri değişmiş veya zaten doğrulanmış alanlar atlanır.
+5. Onayda `verifiedBy` + `verifiedAt` + kaynak (`CATALOG_ATTRIBUTE`) saklanır; onaylanmayan alan AI'ya kesin bilgi olarak girmez.
+
+### Gerçek veri (bu makine)
+
+| Sınıf | Adet |
+| --- | --- |
+| GÜVENİLİR | **23** |
+| İNCELEME | **29** |
+| RED | **4** ("Type 1", "Arkada kalıyor", "Yok", "mevcut ucunda ağırlık kurşunlu ürün") |
+| Boş (katalogda yok) | 34 |
+
+Top-3: `patlayanurun` 2 güvenilir (Keten, Oda Karanlığı) · `ilyaketentulrenklikod` 3 (Keten, Pilesiz (1 x 1), Şeffaf) ·
+`puffyekru` 0 (800 varyant, sayfa sınırı → tüm alanlar incelemede).
+
+### Kalite testi
+
+Toplu doğrulama sonrası: `npm run quality:product -- --onay --phase after` (doğrulanmış alan yoksa exit 6).

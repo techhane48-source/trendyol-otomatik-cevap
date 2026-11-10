@@ -25,7 +25,7 @@ if (!store) {
 }
 
 console.log("KATALOG SENKRONU (salt okunur GET)");
-const sync = await syncCatalog({ storeId: store.id, limit: 10 }, { prisma, pageSize: 100, maxPages: 3 });
+const sync = await syncCatalog({ storeId: store.id, limit: 10 }, { prisma, pageSize: 100, maxPages: 8 });
 console.log(`  istenen: ${sync.requested} · senkron: ${sync.synced} · bulunamadı: ${sync.notFound} · hata: ${sync.failed}`);
 console.log(`  varyant: ${sync.variants} · sayfa sınırına takılan ürün: ${sync.truncated}`);
 for (const product of sync.products) {

@@ -4,7 +4,7 @@ import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { FIELD_DEFS, getCardFields, getProductQuestionHints, listTopProducts } from "@/lib/products/bank";
 import { buildAutoFillPlan, summarizePlan } from "@/lib/products/autofill";
-import { approveAutoAction, autoFillAction, syncCatalogAction } from "./actions";
+import { approveAutoAction, autoFillAction, syncCatalogAction, verifySelectedAction } from "./actions";
 import { listSuggestions } from "@/lib/products/suggestions";
 
 import {
@@ -117,6 +117,17 @@ export default async function ProductBankPage({
   const planTotals = summarizePlan(plans);
   const catalogCount = plans.length;
   const onlyReview = params.durum === "inceleme";
+  const questionCounts = new Map(products.map((product) => [product.productMainId, product.questionCount]));
+  const trustedCandidates = plans
+    .flatMap((plan) =>
+      plan.fields
+        .filter((field) => field.verdict === "TRUSTED" && !field.verified && field.value)
+        .map((field) => ({ plan, field })),
+    )
+    .sort(
+      (a, b) =>
+        (questionCounts.get(b.plan.productMainId) ?? 0) - (questionCounts.get(a.plan.productMainId) ?? 0),
+    );
   const visiblePlans = onlyReview ? plans.filter((plan) => plan.reviewCount > 0) : plans;
 
   return (
@@ -147,6 +158,74 @@ export default async function ProductBankPage({
           {ERROR_MESSAGES[params.hata] ?? "İşlem tamamlanamadı."}
         </p>
       ) : null}
+
+      <section style={{ marginTop: 18, padding: 14, border: "1px solid var(--border)", borderRadius: 10 }}>
+        <h2 style={{ fontSize: 16, margin: "0 0 6px" }}>Güvenilir adaylar — toplu onay</h2>
+        <p style={{ fontSize: 12, opacity: 0.72, marginTop: 0 }}>
+          Yalnızca açık katalog özelliği, tüm varyantlarda aynı değer ve çelişkisiz alanlar listelenir. Kategori adı, kod
+          benzeri değer veya varyantlar arasında farklılık varsa aday burada görünmez (İNCELEME/RED). Onaylanan alanların
+          kaynağı ve onay zamanı saklanır; onaylanmayanlar AI'ya kesin bilgi olarak girmez.
+        </p>
+
+        {trustedCandidates.length === 0 ? (
+          <p style={{ fontSize: 12.5, marginBottom: 0 }}>
+            Güvenilir aday yok. Önce "Ürünleri Getir" ve "Bilgileri Otomatik Doldur" adımlarını çalıştırın.
+          </p>
+        ) : (
+          <form action={verifySelectedAction}>
+            <input type="hidden" name="storeId" value={store.id} />
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr>
+                  <th style={headStyle}>Seç</th>
+                  <th style={headStyle}>Ürün</th>
+                  <th style={headStyle}>Özellik</th>
+                  <th style={headStyle}>Değer</th>
+                  <th style={headStyle}>Kaynak</th>
+                  <th style={headStyle}>Güven</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trustedCandidates.map(({ plan, field }) => (
+                  <tr key={`${plan.productMainId}-${field.key}`}>
+                    <td style={cellStyle}>
+                      <input
+                        type="checkbox"
+                        name="pick"
+                        value={`${plan.productMainId}|${field.key}|${field.value ?? ""}`}
+                        aria-label={`${plan.productMainId} ${field.label}`}
+                      />
+                    </td>
+                    <td style={cellStyle}>
+                      {plan.title ?? plan.productMainId}
+                      <div style={{ fontSize: 11, opacity: 0.6 }}>{plan.productMainId}</div>
+                    </td>
+                    <td style={cellStyle}>{field.label}</td>
+                    <td style={cellStyle}>{field.value}</td>
+                    <td style={cellStyle}>{SOURCE_LABELS[field.source ?? ""] ?? field.source ?? "-"}</td>
+                    <td style={cellStyle}>
+                      GÜVENİLİR
+                      <div style={{ fontSize: 11, opacity: 0.6 }}>{field.confidence ?? "-"}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+              <button type="submit" style={primaryButtonStyle}>
+                Seçilenleri Doğrula ({trustedCandidates.length} aday)
+              </button>
+              <button type="submit" name="all" value="1" style={buttonStyle}>
+                Tüm güvenilir adayları doğrula
+              </button>
+              <span style={{ fontSize: 12, opacity: 0.72 }}>
+                Onay öncesi toplam aday sayısı yukarıda; yalnızca güvenilir ve değişmemiş alanlar doğrulanır.
+              </span>
+            </div>
+          </form>
+        )}
+      </section>
 
       <section style={{ marginTop: 18, padding: 14, border: "1px solid var(--border)", borderRadius: 10 }}>
         <h2 style={{ fontSize: 16, margin: "0 0 6px" }}>Otomatik ürün bilgisi</h2>

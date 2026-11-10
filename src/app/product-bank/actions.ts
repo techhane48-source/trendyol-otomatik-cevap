@@ -9,7 +9,7 @@ import { getEnv } from "@/lib/env";
 import { BankError, bulkSetField, importCsv, setField, unverifyField, verifyField } from "@/lib/products/bank";
 import { acceptSuggestion, generateSuggestions, rejectSuggestion } from "@/lib/products/suggestions";
 import { syncCatalog } from "@/lib/products/catalog-sync";
-import { applyAutoFill, approveAutoFilled } from "@/lib/products/autofill";
+import { applyAutoFill, approveAutoFilled, buildAutoFillPlan, verifySelectedFields } from "@/lib/products/autofill";
 
 async function requireActor(): Promise<string> {
   const store = await cookies();
@@ -217,4 +217,44 @@ export async function approveAutoAction(formData: FormData): Promise<void> {
   const result = await approveAutoFilled({ storeId, productMainId, actor }, {});
   const summary = `${result.verified} alan doğrulandı · ${result.skipped} alan incelemede`;
   redirect(`/product-bank?main=${encodeURIComponent(productMainId)}&ok=onay&ozet=${encodeURIComponent(summary)}#kart`);
+}
+
+/**
+ * "Seçilenleri Doğrula" (GÖREV 010B).
+ * Formdan gelen her satır `productMainId|fieldKey|value` biçimindedir. Sunucu tarafında
+ * güven sınıfı yeniden hesaplanır: yalnızca GÜVENİLİR ve değeri değişmemiş alanlar doğrulanır.
+ */
+export async function verifySelectedAction(formData: FormData): Promise<void> {
+  const actor = await requireActor();
+  const storeId = storeIdOf(formData);
+  const verifyAll = String(formData.get("all") ?? "") === "1";
+  const picks = formData.getAll("pick").map(String);
+
+  let items: Array<{ productMainId: string; fieldKey: string; value: string }> = [];
+
+  if (verifyAll) {
+    // Sunucu tarafında güvenilir adaylar yeniden hesaplanır; istemciye güvenilmez.
+    const plans = await buildAutoFillPlan({ storeId }, {});
+    items = plans.flatMap((plan) =>
+      plan.fields
+        .filter((field) => field.verdict === "TRUSTED" && !field.verified && field.value)
+        .map((field) => ({ productMainId: plan.productMainId, fieldKey: field.key, value: field.value ?? "" })),
+    );
+  } else {
+    items = picks
+      .map((pick) => {
+        const [productMainId, fieldKey, ...rest] = pick.split("|");
+        return { productMainId, fieldKey, value: rest.join("|") };
+      })
+      .filter((item) => item.productMainId && item.fieldKey);
+  }
+
+  if (items.length === 0) redirect("/product-bank?hata=secim-yok");
+
+  const result = await verifySelectedFields({ storeId, actor, items }, {});
+  const summary = `${result.verified} alan doğrulandı · ${result.skipped} atlandı · ${result.alreadyVerified} zaten doğrulanmış`;
+  const firstReason = result.skippedReasons[0]?.reason;
+  redirect(
+    `/product-bank?ok=toplu-onay&ozet=${encodeURIComponent(firstReason ? `${summary} (${firstReason})` : summary)}`,
+  );
 }
