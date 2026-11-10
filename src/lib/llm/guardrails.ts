@@ -7,7 +7,15 @@
  * edilmeden (acknowledgeWarnings) yapılamaz.
  */
 
-export type WarningKind = "MEASUREMENT" | "WARRANTY" | "SHIPPING" | "MATERIAL" | "STOCK" | "PROMISE";
+export type WarningKind =
+  | "MEASUREMENT"
+  | "WARRANTY"
+  | "SHIPPING"
+  | "MATERIAL"
+  | "STOCK"
+  | "PROMISE"
+  /** Geçmiş cevaptan gelen, güncelliği kanıtlanmamış bilgi */
+  | "STALE";
 
 export interface DraftWarning {
   kind: WarningKind;

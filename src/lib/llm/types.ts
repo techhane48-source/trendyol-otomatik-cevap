@@ -21,6 +21,11 @@ export interface DraftContext {
   tone?: string | null;
   /** Sipariş/ölçü değişikliği bağlamı için ek talimat (varsa). */
   orderGuidance?: string | null;
+  /**
+   * Geçmiş soru-cevaplar (REFERANS). Doğrulanmış ürün bilgisi değildir; fiyat/stok/
+   * teslimat/iade bilgisi güncel gerçek olarak kullanılamaz.
+   */
+  history?: Array<{ ref: string; question: string; answer: string; reviewStatus: string; reason: string }> | null;
 }
 
 import type { LlmUsageInfo } from "./usage";

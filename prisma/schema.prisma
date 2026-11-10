@@ -63,6 +63,12 @@ model Question {
   /// API'den gelen ham veri (ek alanlar dahil)
   raw                Json?
 
+  /// Geçmiş cevap doğrulama durumu (yalnızca answerText doluysa anlamlı)
+  answerReviewStatus AnswerReviewStatus @default(UNREVIEWED)
+  answerReviewNote   String?
+  answerReviewedBy   String?
+  answerReviewedAt   DateTime?
+
   firstSeenAt        DateTime       @default(now())
   lastSyncedAt       DateTime       @default(now())
   createdAt          DateTime       @default(now())
@@ -70,6 +76,7 @@ model Question {
 
   @@unique([storeId, trendyolQuestionId])
   @@index([storeId, status])
+  @@index([storeId, answerReviewStatus])
   @@index([askedAt])
   @@map("questions")
 
@@ -205,6 +212,9 @@ model AnswerDraft {
   estimatedCostUSD Float?
   /// Token/maliyet değerleri sağlayıcıdan gelmediyse tahmin edildi mi?
   usageEstimated   Boolean @default(false)
+
+  /// Taslakta yararlanılan geçmiş cevaplar (soru kimliği + benzerlik + gerekçe)
+  historyUsed      Json?
 
   createdBy  String?
   approvedBy String?
@@ -422,6 +432,14 @@ model OrderLine {
   @@map("order_lines")
 }
 
+/// Geçmiş satıcı cevabının insan tarafından doğrulama durumu.
+enum AnswerReviewStatus {
+  UNREVIEWED
+  VERIFIED
+  WRONG
+  OUTDATED
+}
+
 enum OrderChangeStatus {
   PENDING_REVIEW
   APPROVED
@@ -436,6 +454,7 @@ enum OrderChangeAction {
   REJECTED
   INVALIDATED
   VERIFICATION_REQUIRED
+  OWNERSHIP_VERIFIED
   NOTE
 }
 
@@ -464,6 +483,9 @@ model OrderChangeRequest {
   orderStatusAtApproval String?
   /// Müşteri sahipliği API verisiyle doğrulanabildi mi?
   ownershipVerified  Boolean           @default(false)
+  /// Sahiplik doğrulamasını kim, ne zaman yaptı (serbest metin notundan ayrı)
+  ownershipVerifiedBy String?
+  ownershipVerifiedAt DateTime?
   matchNote          String?
 
   createdBy          String?

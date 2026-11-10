@@ -3,7 +3,11 @@ import { cookies } from "next/headers";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { listApprovedForProduction, listChangeRequests } from "@/lib/orders/service";
 
-import { approveChangeRequestAction, rejectChangeRequestAction } from "../orders/actions";
+import {
+  approveChangeRequestAction,
+  markOwnershipAction,
+  rejectChangeRequestAction,
+} from "../orders/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +27,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const OK_MESSAGES: Record<string, string> = {
   "talep-olusturuldu": "Talep oluşturuldu. Onay öncesi sipariş durumu tekrar sorgulanacak.",
+  "sahiplik-dogrulandi": "Sahiplik doğrulaması kaydedildi. Artık onay verilebilir.",
   onaylandi: "Talep onaylandı (yerel kayıt). Canlı durum onay anında yeniden doğrulandı.",
   reddedildi: "Talep reddedildi.",
 };
@@ -37,6 +42,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   "request-invalidated": "Talep geçersiz kılınmış; yeni talep oluşturun.",
   "line-not-matched": "Sipariş kalemi eşleşmediği için onaylanamaz.",
   "request-state-changed": "Talep durumu değişti; işlem tekrarlanmadı.",
+  "ownership-not-verified": "Müşteri sahipliği doğrulanmadan onay verilemez; önce sahiplik doğrulaması kaydedin.",
   "already-rejected": "Talep zaten reddedilmiş.",
   "beklenmeyen-hata": "Beklenmeyen bir hata oluştu.",
 };
@@ -150,12 +156,26 @@ export default async function ChangeRequestsPage({
                       <td style={cellStyle}>{dateFormatter.format(row.createdAt)}</td>
                       <td style={cellStyle}>
                         {row.status === "PENDING_REVIEW" || row.status === "NEEDS_VERIFICATION" ? (
-                          <div style={{ display: "flex", gap: 6 }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {!row.ownershipVerified ? (
+                              <form action={markOwnershipAction}>
+                                <input type="hidden" name="requestId" value={row.id} />
+                                <input type="hidden" name="note" value="Sipariş müşteriyle eşleştirildi (insan doğrulaması)" />
+                                <button
+                                  type="submit"
+                                  style={{ padding: "5px 9px", borderRadius: 7, border: "1px solid var(--border)", cursor: "pointer", fontSize: 12 }}
+                                >
+                                  Sahipliği doğrula
+                                </button>
+                              </form>
+                            ) : null}
                             <form action={approveChangeRequestAction}>
                               <input type="hidden" name="requestId" value={row.id} />
                               <button
                                 type="submit"
-                                style={{ padding: "5px 9px", borderRadius: 7, border: "1px solid var(--border)", cursor: "pointer", fontSize: 12 }}
+                                disabled={!row.ownershipVerified}
+                                title={row.ownershipVerified ? undefined : "Önce sahiplik doğrulaması gerekir"}
+                                style={{ padding: "5px 9px", borderRadius: 7, border: "1px solid var(--border)", cursor: row.ownershipVerified ? "pointer" : "not-allowed", fontSize: 12, opacity: row.ownershipVerified ? 1 : 0.5 }}
                               >
                                 Onayla
                               </button>

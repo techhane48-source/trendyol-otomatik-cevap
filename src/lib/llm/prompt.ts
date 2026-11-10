@@ -43,6 +43,28 @@ export function buildDraftMessages(context: DraftContext): LlmMessage {
     lines.push("", "SİPARİŞ / ÖLÇÜ DEĞİŞİKLİĞİ KURALLARI (bu kurallara kesinlikle uy):", context.orderGuidance.trim());
   }
 
+  if (context.history && context.history.length > 0) {
+    lines.push(
+      "",
+      "GEÇMİŞ CEVAPLAR (yalnızca REFERANS — doğrulanmış gerçek DEĞİLDİR):",
+    );
+    for (const item of context.history) {
+      lines.push(
+        `- [${item.ref} · ${item.reviewStatus} · ${item.reason}]`,
+        `  Soru: ${item.question}`,
+        `  Eski cevap: ${item.answer}`,
+      );
+    }
+    lines.push(
+      "GEÇMİŞ CEVAP KURALLARI:",
+      "1. Geçmiş cevaplar yalnızca üslup ve genel bilgi için referanstır; aynen kopyalama.",
+      "2. Geçmiş cevaplardaki fiyat, stok, teslimat süresi, iade koşulu ve sipariş değişikliği bilgilerini",
+      "   güncel gerçek gibi YAZMA. Bu bilgiler değişmiş olabilir; gerekirse kontrol edileceğini söyle.",
+      "3. Doğrulanmış ürün bilgisi ile geçmiş cevap çelişirse ÜRÜN BİLGİSİ esas alınır.",
+      "4. Geçmiş cevapta olmayan yeni bir özellik/ölçü uydurma.",
+    );
+  }
+
   if (!productInfo || productInfo.length === 0) {
     lines.push(
       "",

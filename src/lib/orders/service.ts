@@ -338,6 +338,9 @@ export async function createChangeRequestFromQuestion(
         status,
         orderStatusAtRequest: live.map((pkg) => pkg.status).join(","),
         ownershipVerified,
+        // API verisiyle doğrulanan sahiplik ayrı alanlara da yazılır (denetim izi).
+        ownershipVerifiedBy: ownershipVerified ? "api:customerId" : null,
+        ownershipVerifiedAt: ownershipVerified ? new Date() : null,
         matchNote: [lineMatch.reason, ...notes].filter(Boolean).join(" | ").slice(0, 500),
         createdBy: actorName,
       },
@@ -380,6 +383,54 @@ export async function createChangeRequestFromQuestion(
 }
 
 /** Onay: yalnızca canlı durum hâlâ Created ise. Aksi halde talep INVALIDATED olur. */
+/**
+ * Sahiplik doğrulamasını AYRI bir adım olarak kaydeder.
+ *
+ * Serbest metin notu (`reviewNote`) yetki kanıtı değildir; bu yüzden onaydan önce
+ * kimin/ne zaman doğruladığı ayrı alanlara yazılır. Yalnızca insan bu adımı çalıştırabilir.
+ */
+export async function markOwnershipVerified(
+  input: { requestId: string; actor: OrderActor; note?: string | null },
+  deps: OrderDeps = {},
+): Promise<{ id: string; ownershipVerified: boolean }> {
+  const actorName = requireActor(input.actor);
+  const prisma = deps.prisma ?? getPrisma();
+
+  const request = await prisma.orderChangeRequest.findUnique({ where: { id: input.requestId } });
+  if (!request) throw new OrderError("REQUEST_NOT_FOUND", "Talep bulunamadı.");
+  if (request.status === "APPROVED" || request.status === "REJECTED" || request.status === "INVALIDATED") {
+    throw new OrderError("REQUEST_STATE_CHANGED", "Kapanmış talep için sahiplik doğrulaması yapılamaz.");
+  }
+  if (!request.lineId) {
+    throw new OrderError("LINE_NOT_MATCHED", "Kalem eşleşmesi olmayan talep için sahiplik doğrulanamaz.");
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.orderChangeRequest.update({
+      where: { id: request.id },
+      data: {
+        ownershipVerified: true,
+        ownershipVerifiedBy: actorName,
+        ownershipVerifiedAt: new Date(),
+        reviewNote: input.note?.trim() || request.reviewNote,
+      },
+    });
+
+    await tx.orderChangeEvent.create({
+      data: {
+        requestId: request.id,
+        action: "OWNERSHIP_VERIFIED",
+        actor: actorName,
+        details: { orderNumber: request.orderNumber, lineId: request.lineId, note: input.note?.trim() || null },
+      },
+    });
+
+    return row;
+  });
+
+  return { id: updated.id, ownershipVerified: updated.ownershipVerified };
+}
+
 export async function approveChangeRequest(
   input: { requestId: string; actor: OrderActor; note?: string | null },
   deps: OrderDeps = {},
@@ -396,6 +447,15 @@ export async function approveChangeRequest(
   }
   if (!request.lineId) {
     throw new OrderError("LINE_NOT_MATCHED", "Sipariş kalemi eşleşmediği için onaylanamaz.");
+  }
+
+  // Sahiplik API verisiyle doğrulanmadıysa yalnızca serbest metin notuyla onay verilemez.
+  // Önce `markOwnershipVerified` ile ayrı ve kayıtlı bir doğrulama adımı gerekir.
+  if (!request.ownershipVerified) {
+    throw new OrderError(
+      "OWNERSHIP_NOT_VERIFIED",
+      "Müşteri sahipliği doğrulanmadan onay verilemez; önce sahiplik doğrulaması kaydedilmeli.",
+    );
   }
 
   // Eşzamanlılık: canlı durum onay anında yeniden doğrulanır.

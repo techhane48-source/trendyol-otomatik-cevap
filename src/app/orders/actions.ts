@@ -11,6 +11,7 @@ import {
   OrderError,
   approveChangeRequest,
   createChangeRequestFromQuestion,
+  markOwnershipVerified,
   rejectChangeRequest,
   syncOrders,
 } from "@/lib/orders/service";
@@ -89,6 +90,23 @@ export async function approveChangeRequestAction(formData: FormData): Promise<vo
 
   revalidatePath("/change-requests");
   redirect(failure ? `/change-requests?hata=${failure}` : "/change-requests?ok=onaylandi");
+}
+
+export async function markOwnershipAction(formData: FormData): Promise<void> {
+  const requestId = String(formData.get("requestId") ?? "");
+  const note = String(formData.get("note") ?? "").trim();
+
+  let failure: string | null = null;
+
+  try {
+    const actor = { name: await requireActorName() };
+    await markOwnershipVerified({ requestId, actor, note: note || null });
+  } catch (error) {
+    failure = errorCodeFor(error);
+  }
+
+  revalidatePath("/change-requests");
+  redirect(failure ? `/change-requests?hata=${failure}` : "/change-requests?ok=sahiplik-dogrulandi");
 }
 
 export async function rejectChangeRequestAction(formData: FormData): Promise<void> {

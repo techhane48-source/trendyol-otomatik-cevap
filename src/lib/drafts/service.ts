@@ -6,7 +6,9 @@ import { getPrisma } from "@/lib/prisma";
 import { detectUnverifiedClaims, normalizeDraftText, type DraftWarning } from "./../llm/guardrails";
 import { buildDraftMessages } from "./../llm/prompt";
 import { createLlmProvider } from "./../llm/provider";
-import { sanitizeQuestion } from "./../llm/sanitize";
+import { maskPii, sanitizeQuestion } from "./../llm/sanitize";
+import { evaluateHistoryUsage } from "@/lib/history/guard";
+import { searchHistoricalAnswers, type HistoryMatch } from "@/lib/history/search";
 import { LlmNotConfiguredError, LlmRequestError, type LlmProvider } from "./../llm/types";
 import { computeCostUSD, resolvePricing } from "./../llm/usage";
 import { buildOrderGuidance, detectOrderClaimViolations, type OrderChangeState } from "@/lib/orders/ai-guidance";
@@ -88,6 +90,16 @@ export interface DraftView {
   totalTokens: number | null;
   estimatedCostUSD: number | null;
   usageEstimated: boolean;
+  /** Taslakta yararlanılan geçmiş cevaplar (soru kimliği + gerekçe) */
+  historyUsed: Array<{
+    questionId: string;
+    trendyolQuestionId: string;
+    reviewStatus: string;
+    score: number;
+    similarity: number;
+    productMatch: boolean;
+    reason: string;
+  }>;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -141,6 +153,7 @@ function toView(draft: {
   totalTokens?: number | null;
   estimatedCostUSD?: number | null;
   usageEstimated?: boolean | null;
+  historyUsed?: unknown;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -164,6 +177,7 @@ function toView(draft: {
     totalTokens: draft.totalTokens ?? null,
     estimatedCostUSD: draft.estimatedCostUSD ?? null,
     usageEstimated: draft.usageEstimated ?? false,
+    historyUsed: Array.isArray(draft.historyUsed) ? (draft.historyUsed as DraftView["historyUsed"]) : [],
   };
 }
 
@@ -172,7 +186,13 @@ function toView(draft: {
  * üretilen metin ayrıca guardrail ile denetlenir.
  */
 export async function createAiDraft(
-  input: { questionId: string; actor: Actor; productInfo?: string | null },
+  input: {
+    questionId: string;
+    actor: Actor;
+    productInfo?: string | null;
+    /** Geçmiş cevap hafızasını kullan (karşılaştırma ölçümü için kapatılabilir). */
+    includeHistory?: boolean;
+  },
   deps: DraftDeps = {},
 ): Promise<DraftView> {
   const actorName = requireActor(input.actor);
@@ -255,6 +275,35 @@ export async function createAiDraft(
 
   const sanitized = sanitizeQuestion(question.text);
 
+  // Geçmiş cevap hafızası: yalnızca aynı mağaza, cevabı olan ve WRONG/OUTDATED olmayan kayıtlar.
+  // Metinler PII'den arındırılır; ham müşteri kimliği bağlama girmez.
+  let historyMatches: HistoryMatch[] = [];
+  if (input.includeHistory !== false) {
+    try {
+      historyMatches = await searchHistoricalAnswers(
+        {
+          storeId: question.storeId,
+          text: question.text,
+          productMainId: question.productMainId,
+          excludeQuestionId: question.id,
+          limit: 4,
+        },
+        { prisma },
+      );
+    } catch {
+      // Arama altyapısı (pg_trgm) yoksa taslak üretimi durmaz; hafızasız devam edilir.
+      historyMatches = [];
+    }
+  }
+
+  const historyForPrompt = historyMatches.map((match) => ({
+    ref: `#${match.trendyolQuestionId}`,
+    question: maskPii(match.text),
+    answer: maskPii(match.answerText),
+    reviewStatus: match.reviewStatus,
+    reason: match.reason,
+  }));
+
   const messages = buildDraftMessages({
     questionText: sanitized.text,
     productName: question.productName,
@@ -262,6 +311,7 @@ export async function createAiDraft(
     productInfo: productInfoText,
     storeName: null,
     tone: null,
+    history: historyForPrompt.length > 0 ? historyForPrompt : null,
     orderGuidance: `${orderGuidance.instruction}${orderGuidance.suggestedPhrase ? ` Örnek cümle: "${orderGuidance.suggestedPhrase}"` : ""}`,
   });
 
@@ -303,6 +353,21 @@ export async function createAiDraft(
     if (!warnings.some((warning) => warning.phrase === violation.phrase)) warnings.push(violation);
   }
 
+  const historyUsage = evaluateHistoryUsage(text, historyMatches, {
+    verifiedCardUsed: usedFacts.length > 0,
+    liveOrderVerified: orderState.kind === "APPROVED",
+  });
+  for (const message of historyUsage.messages) {
+    if (!warnings.some((warning) => warning.phrase === message)) {
+      warnings.push({ kind: "STALE", phrase: message });
+    }
+  }
+  if (historyMatches.length > 0) {
+    missingInfo.push(
+      `Geçmiş cevaplardan ${historyMatches.length} kayıt referans alındı (doğrulanmış gerçek değildir).`,
+    );
+  }
+
   if (sanitized.injectionSuspected) {
     missingInfo.push("Soru metninde talimat benzeri ifade tespit edildi; güvenilmeyen veri olarak işlendi.");
   }
@@ -313,7 +378,7 @@ export async function createAiDraft(
   const hasUnverifiedPromise =
     warnings.some((warning) => warning.kind === "PROMISE") ||
     (orderViolations.length > 0 && orderState.kind !== "APPROVED");
-  const needsInfo = hasUnverifiedPromise && usedFacts.length === 0;
+  const needsInfo = (hasUnverifiedPromise && usedFacts.length === 0) || historyUsage.blocksApproval;
   const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
 
   const draft = await prisma.$transaction(async (tx) => {
@@ -359,6 +424,18 @@ export async function createAiDraft(
         totalTokens: completion.usage.totalTokens,
         estimatedCostUSD: costUSD,
         usageEstimated: completion.usage.estimated,
+        historyUsed:
+          historyMatches.length > 0
+            ? (historyMatches.map((match) => ({
+                questionId: match.questionId,
+                trendyolQuestionId: match.trendyolQuestionId,
+                reviewStatus: match.reviewStatus,
+                score: match.score,
+                similarity: match.similarity,
+                productMatch: match.productMatch,
+                reason: match.reason,
+              })) as unknown as object)
+            : undefined,
         createdBy: actorName,
       },
     });

@@ -338,13 +338,20 @@ describe("onay ve ret", () => {
     expect(events.some((event) => event.action === "INVALIDATED")).toBe(true);
   });
 
-  it("doğrulama bekleyen talep insan incelemesiyle onaylanabilir", async () => {
+  it("doğrulama bekleyen talep, sahiplik doğrulaması kaydedildikten sonra onaylanabilir", async () => {
     const questionId = await seedQuestion({ customerId: "CUST-OTHER" });
     const client = fakeClient([pkg()]);
     const created = await createChangeRequestFromQuestion({ questionId, actor }, { prisma, client });
     expect(created.status).toBe("NEEDS_VERIFICATION");
 
-    const approved = await approveChangeRequest({ requestId: created.id, actor, note: "sipariş müşteriyle eşleşti" }, { prisma, client });
+    // Serbest metin notu yetmez: ayrı ve kayıtlı doğrulama adımı gerekir.
+    await expect(
+      approveChangeRequest({ requestId: created.id, actor, note: "sipariş müşteriyle eşleşti" }, { prisma, client }),
+    ).rejects.toMatchObject({ code: "OWNERSHIP_NOT_VERIFIED" });
+
+    const { markOwnershipVerified } = await import("@/lib/orders/service");
+    await markOwnershipVerified({ requestId: created.id, actor, note: "sipariş müşteriyle eşleşti" }, { prisma });
+    const approved = await approveChangeRequest({ requestId: created.id, actor }, { prisma, client });
     expect(approved.status).toBe("APPROVED");
   });
 

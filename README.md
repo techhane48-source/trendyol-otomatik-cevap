@@ -564,3 +564,62 @@ Onaylı kayıt yokken "onaylandı / uygulanacak / yapılamıyor" gibi kesin ifad
 | `npm run mock:orders` | Mock sipariş servisi (port 5597, `POST /_control` ile durum değiştirilebilir) |
 | `npx tsx scripts/e2e-orders.mts` | Gerçek PostgreSQL + mock servis E2E (oluştur/onayla/geçersiz kıl/kesinti) |
 | `npx tsx scripts/live-orders-check.mts` | Gerçek Trendyol'a **tek** salt okunur `GET`, PII yazdırmaz |
+
+## Geçmiş cevap hafızası (GÖREV 008)
+
+Trendyol'da daha önce verilmiş **satıcı cevapları** aynı salt okunur senkronizasyonla `questions` tablosunda
+tutulur (`answerText`, `answeredAt`); `(storeId, trendyolQuestionId)` benzersiz olduğu için tekrar kayıt oluşmaz.
+Yeni soru üretilirken aynı mağazadaki benzer geçmiş cevaplar AI'ya **referans** olarak verilir.
+
+### Arama (Türkçe)
+
+`pg_trgm` uzantısı + GIN indeksleri (`questions.text`, `questions.answerText`) kullanılır. Trigram Türkçe ekleri
+kökemediği için sıralama üç sinyalle birleştirilir:
+
+1. aynı ürün (`productMainId`) → +0.25,
+2. trigram benzerliği (`similarity`),
+3. anahtar kelime örtüşmesi (kaba ek kırpma, stopword temizliği) → +0.35 × oran,
+4. `VERIFIED` cevap → +0.10.
+
+En iyi 4 kayıt (en fazla 10) bağlama girer; `WRONG` ve `OUTDATED` kayıtlar **hiç girmez**, `UNREVIEWED` girebilir.
+Embedding altyapısı opsiyoneldir: `src/lib/history/search.ts` içindeki sıralama vektör skoruyla değiştirilebilir,
+arayüz (`searchHistoricalAnswers`) aynı kalır.
+
+### Doğrulama durumları (`/answers`)
+
+| Durum | Anlamı | AI bağlamı |
+| --- | --- | --- |
+| `UNREVIEWED` | Senkronize edildi, insan bakmadı | Girebilir (referans) |
+| `VERIFIED` | İnsan doğruladı | Girebilir (yine kanıt değil) |
+| `WRONG` | Hatalı | **Girmez** |
+| `OUTDATED` | Güncelliğini yitirdi | **Girmez** |
+
+Panelde durum + not + doğrulayan + zaman kaydedilir. Otomatik hiçbir süreç bu durumu kendiliğinden değiştirmez.
+
+### Güncelliğini yitirmiş bilgi koruması
+
+`src/lib/history/guard.ts` fiyat, stok, teslimat, iade ve sipariş değişikliği iddialarını tespit eder. Geçmiş cevap
+kullanıldıysa ve doğrulanmış ürün kartı/canlı sipariş doğrulaması yoksa taslak `NEEDS_INFO` olur (`STALE` uyarısı).
+Doğrulanmış kart varsa uyarı üretilir ama onay akışı engellenmez.
+
+### Taslak ekranı
+
+`/drafts` kartında **Yararlanılan geçmiş cevaplar** bloğu görünür: Trendyol soru kimliği, doğrulama durumu,
+benzerlik skoru ve eşleşme gerekçesi (örn. "aynı ürün · kelime örtüşmesi %50"). Bu bilgiler `answer_drafts.historyUsed`
+alanına da yazılır.
+
+### Sahiplik (GÖREV 007 riski kapatıldı)
+
+Müşteri sahipliği API verisiyle doğrulanmadıysa onay **yalnızca serbest metin notuyla** verilemez:
+`OWNERSHIP_NOT_VERIFIED`. Önce `/change-requests` ekranından "Sahipliği doğrula" adımı çalışır ve
+`ownershipVerifiedBy/At` + `OWNERSHIP_VERIFIED` olayı yazılır; onay ancak bundan sonra mümkündür.
+
+### Ölçüm
+
+```
+npx tsx scripts/sync-answers.mts            # ANSWERED + gerçek satıcı cevaplarını senkronize eder
+npx tsx scripts/history-compare.mts --onay  # 10 soruda hafızalı/hafızasız karşılaştırma (20 çağrı)
+```
+
+Karşılaştırma puanları **otomatiktir** (uzunluk, genel/kaçamak ifade sayısı, `STALE`/`NEEDS_INFO`), insan
+değerlendirmesinin yerine geçmez. Ölçüm taslakları iş bitiminde silinir; gerçek sorular değişmez.

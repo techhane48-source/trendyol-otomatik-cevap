@@ -232,6 +232,24 @@ export default async function DraftsPage({
                       </div>
                     ) : null}
 
+                    {latest.historyUsed.length > 0 ? (
+                      <div style={{ marginBottom: 8, fontSize: 13 }}>
+                        <strong>Yararlanılan geçmiş cevaplar:</strong>
+                        <span className="muted" style={{ fontSize: 12 }}> (referans — doğrulanmış gerçek değil)</span>
+                        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                          {latest.historyUsed.map((item) => (
+                            <li key={`${item.questionId}-${item.trendyolQuestionId}`}>
+                              #{item.trendyolQuestionId}
+                              <span className="muted" style={{ fontSize: 12 }}>
+                                {" "}· {item.reviewStatus === "VERIFIED" ? "doğrulanmış" : "doğrulanmamış"} · benzerlik{" "}
+                                {item.similarity.toFixed(2)} · {item.reason}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
                     {latest.missingInfo.length > 0 ? (
                       <div style={{ marginBottom: 8, fontSize: 13 }}>
                         <strong>Eksik / doğrulanmamış:</strong>
