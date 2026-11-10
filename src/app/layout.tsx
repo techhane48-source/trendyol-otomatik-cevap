@@ -3,28 +3,28 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Trendyol Soru Asistanı",
-  description: "Trendyol müşteri sorularını okuyan ve kaydeden salt okunur panel",
+  title: "Trendyol Soru Asistanı — Yönetim Paneli",
+  description:
+    "Trendyol müşteri soruları, AI cevap taslakları, sipariş ölçü talepleri ve ürün bilgi bankası yönetim paneli",
 };
 
+/**
+ * Kök layout yalnızca kabuk görevini üstlenir (html/body + tema başlatma).
+ * Panelin kendi yerleşimi `(panel)/layout.tsx` içindedir; `/giris` sade düzenini korur.
+ */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="tr">
-      <body>
-        <div className="shell">
-          <header className="topbar">
-            <span className="brand">Trendyol Soru Asistanı</span>
-            <nav>
-              <a href="/questions">Sorular</a>
-              <a href="/api/health">Sağlık</a>
-            </nav>
-          </header>
-          <main>{children}</main>
-          <footer className="footer">
-            Faz 1 — salt okunur. Cevap gönderme özelliği bilinçli olarak yok.
-          </footer>
-        </div>
-      </body>
+    <html lang="tr" suppressHydrationWarning>
+      <head>
+        {/* Tema ilk boyamada uygulanır: koyu modda beyaz parlama olmaz. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              '(function(){try{var t=localStorage.getItem("panel-theme");document.documentElement.dataset.theme=t==="dark"?"dark":"light";}catch(e){document.documentElement.dataset.theme="light";}})();',
+          }}
+        />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }

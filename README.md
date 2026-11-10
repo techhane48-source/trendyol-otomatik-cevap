@@ -834,3 +834,33 @@ Top-3: `patlayanurun` 2 güvenilir (Keten, Oda Karanlığı) · `ilyaketentulren
 ### Kalite testi
 
 Toplu doğrulama sonrası: `npm run quality:product -- --onay --phase after` (doğrulanmış alan yoksa exit 6).
+
+## GÖREV 011 — TailAdmin tabanlı panel (Faz 1)
+
+### Yaklaşım
+TailAdmin Next.js Free deposu **klonlanmadı**; tasarım dili (gri yüzey + beyaz kart + indigo vurgu, 2xl köşe,
+gölgesiz ince kenar, 11–14px tipografi, üç bölümlü sol menü) kendi bileşenlerimize uyarlandı.
+Böylece mevcut route/API/Prisma sözleşmeleri değişmedi. Bağımlılık olarak yalnızca **Tailwind CSS v4** eklendi
+(`@tailwindcss/postcss`); TailAdmin'in React bileşenleri ve `apexcharts` gibi ağır paketleri alınmadı.
+
+### Yapı
+- `src/app/(panel)/layout.tsx` — tek yerde erişim kapısı + ortak kabuk (`PanelChrome`).
+- `src/components/panel/panel-chrome.tsx` — sabit sol menü, üst bar, mobil çekmece, tema anahtarı, çıkış.
+- `src/components/panel/theme-toggle.tsx` — `data-theme` + `localStorage`; ilk boyama kök layout script'iyle.
+- `src/app/(panel)/page.tsx` — **Genel Bakış**: soru/taslak/ölçü talebi/doğrulanmış alan, ürün bankası doluluk
+  oranları, son işlemler (DraftEvent + OrderChangeEvent), son 7 gün AI çağrı/hata/maliyet.
+- `src/app/(panel)/product-bank/page.tsx` — sekmeler (Güvenilir/İnceleme/Doğrulanmış/Boş), ürün arama,
+  toplu onay tablosu, ürün kartları (en çok soru gelen üstte), alan düzenleyici, geçmiş cevap önerileri.
+- `src/app/globals.css` — Tailwind v4 + `@theme` token'ları (`bg-surface`, `text-ink`, `border-line`, `brand-*`),
+  eski sayfaların `.shell`/`.card` sınıfları korunur.
+
+### Korunanlar
+Tüm Prisma modelleri ve migration'lar (17), Trendyol salt okunur istemcileri, AI taslak üretimi, doğrulama mantığı,
+sipariş/ölçü karar motoru, `APP_ACCESS_TOKEN` kapısı ve 322 test değiştirilmedi.
+
+### Erişim
+Panel: `http://localhost:3100/giris` → anahtar `APP_ACCESS_TOKEN`. Çerez `ty_access`, 12 saat, HttpOnly.
+
+### Faz 1 kapsamı dışında
+Diğer sayfaların (sorular, taslaklar, siparişler, talepler, cevaplar, kalite) görsel tasarımı eski stilini korur;
+Faz 2'de aynı kabuk içinde yenilenecek.
