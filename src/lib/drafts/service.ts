@@ -7,6 +7,8 @@ import { detectUnverifiedClaims, normalizeDraftText, type DraftWarning } from ".
 import { buildDraftMessages } from "./../llm/prompt";
 import { createLlmProvider } from "./../llm/provider";
 import { LlmNotConfiguredError, type LlmProvider } from "./../llm/types";
+import { isUsableForDraft, matchProductInfo } from "@/lib/products/matching";
+import { findProductInfoForQuestion, type ProductAttribute } from "@/lib/products/service";
 
 /**
  * Taslak (AI önerisi + insan onayı) servisi.
@@ -68,6 +70,14 @@ export interface DraftView {
   warnings: DraftWarning[];
   model: string | null;
   promptVersion: string | null;
+  /** Kullanılan ürün bilgi kartı (varsa) */
+  productInfoId: string | null;
+  /** Eşleştirme sonucu: EXACT_VARIANT | MAIN_PRODUCT | AMBIGUOUS | MISSING */
+  productMatch: string | null;
+  /** Taslakta kullanılan doğrulanmış bilgiler */
+  usedFacts: Array<{ label: string; value: string; source?: string }>;
+  /** Eksik/doğrulanmamış bilgiler */
+  missingInfo: string[];
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -85,6 +95,11 @@ export interface DraftWithHistory extends DraftView {
     note: string | null;
     createdAt: Date;
   }>;
+}
+
+/** Panel/ara katman için ham Prisma satırını görünüm nesnesine çevirir. */
+export function toDraftView(draft: Parameters<typeof toView>[0]): DraftView {
+  return toView(draft);
 }
 
 function toWarnings(value: unknown): DraftWarning[] {
@@ -106,6 +121,10 @@ function toView(draft: {
   warnings: unknown;
   model: string | null;
   promptVersion: string | null;
+  productInfoId?: string | null;
+  productMatch?: string | null;
+  usedFacts?: unknown;
+  missingInfo?: unknown;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -114,7 +133,16 @@ function toView(draft: {
   reviewNote: string | null;
   createdAt: Date;
 }): DraftView {
-  return { ...draft, warnings: toWarnings(draft.warnings) };
+  return {
+    ...draft,
+    warnings: toWarnings(draft.warnings),
+    productInfoId: draft.productInfoId ?? null,
+    productMatch: draft.productMatch ?? null,
+    usedFacts: Array.isArray(draft.usedFacts)
+      ? (draft.usedFacts as Array<{ label: string; value: string; source?: string }>)
+      : [],
+    missingInfo: Array.isArray(draft.missingInfo) ? (draft.missingInfo as string[]) : [],
+  };
 }
 
 /**
@@ -134,13 +162,59 @@ export async function createAiDraft(
 
   // Sağlayıcı yoksa hiçbir satır yazılmaz; panel net hata gösterir.
   const provider = deps.provider ?? createLlmProvider(env);
-  const productInfo = input.productInfo?.trim() || null;
+  const manualInfo = input.productInfo?.trim() || null;
+
+  const candidates = await findProductInfoForQuestion(
+    {
+      storeId: question.storeId,
+      productMainId: question.productMainId,
+      productId: question.productId,
+    },
+    { prisma },
+  );
+
+  const match = matchProductInfo(
+    {
+      storeId: question.storeId,
+      productMainId: question.productMainId,
+      productId: question.productId,
+    },
+    candidates,
+  );
+
+  // Yalnızca doğrulanmış (VERIFIED) ve kesin eşleşen kart kullanılır.
+  let matchedProductId: string | null = null;
+  let cardFacts: ProductAttribute[] = [];
+
+  if ((match.kind === "EXACT_VARIANT" || match.kind === "MAIN_PRODUCT") && isUsableForDraft(match)) {
+    matchedProductId = match.product.id;
+    const card = candidates.find((candidate) => candidate.id === match.product.id);
+    cardFacts = Array.isArray(card?.attributes) ? (card.attributes as unknown as ProductAttribute[]) : [];
+  }
+
+  const usedFacts = [
+    ...cardFacts.map((fact) => ({ ...fact, source: "VERIFIED_CARD" as const })),
+    ...(manualInfo ? [{ label: "Elle girilen bilgi", value: manualInfo, source: "MANUAL" as const }] : []),
+  ];
+
+  const missingInfo: string[] = [];
+  if (match.kind === "MISSING") missingInfo.push("Ürün için kayıtlı bilgi kartı yok.");
+  if (match.kind === "AMBIGUOUS") {
+    missingInfo.push("Varyant belirsiz: aynı ana ürün altında birden fazla kayıt var; bilgi kullanılmadı.");
+  }
+  if ((match.kind === "EXACT_VARIANT" || match.kind === "MAIN_PRODUCT") && !isUsableForDraft(match)) {
+    missingInfo.push("Ürün bilgi kartı doğrulanmamış (DRAFT); bilgi kullanılmadı.");
+  }
+  if (usedFacts.length === 0) missingInfo.push("Doğrulanmış ürün özelliği bulunmuyor.");
+
+  const productInfoText =
+    usedFacts.length > 0 ? usedFacts.map((fact) => `${fact.label}: ${fact.value}`).join("\n") : null;
 
   const messages = buildDraftMessages({
     questionText: question.text,
     productName: question.productName,
     productMainId: question.productMainId,
-    productInfo,
+    productInfo: productInfoText,
     storeName: null,
     tone: null,
   });
@@ -151,7 +225,7 @@ export async function createAiDraft(
 
   const warnings = detectUnverifiedClaims(
     text,
-    [question.productName, question.productMainId, productInfo].filter(Boolean).join(" "),
+    [question.productName, question.productMainId, productInfoText].filter(Boolean).join(" "),
   );
 
   const draft = await prisma.$transaction(async (tx) => {
@@ -187,6 +261,10 @@ export async function createAiDraft(
         warnings: warnings.length > 0 ? (warnings as unknown as object) : undefined,
         model: completion.model,
         promptVersion: completion.promptVersion,
+        productInfoId: matchedProductId,
+        productMatch: match.kind,
+        usedFacts: usedFacts.length > 0 ? (usedFacts as unknown as object) : undefined,
+        missingInfo: missingInfo.length > 0 ? (missingInfo as unknown as object) : undefined,
         createdBy: actorName,
       },
     });
@@ -262,6 +340,10 @@ export async function editDraft(
         warnings: warnings.length > 0 ? (warnings as unknown as object) : undefined,
         model: base.model,
         promptVersion: base.promptVersion,
+        productInfoId: base.productInfoId,
+        productMatch: base.productMatch,
+        usedFacts: base.usedFacts ?? undefined,
+        missingInfo: base.missingInfo ?? undefined,
         createdBy: actorName,
         reviewNote: input.note?.trim() || null,
       },

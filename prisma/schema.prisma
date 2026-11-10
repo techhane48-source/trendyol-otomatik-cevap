@@ -22,6 +22,7 @@ model Store {
 
   questions Question[]
   syncRuns  SyncRun[]
+  productInfos ProductInfo[]
 
   @@map("stores")
 }
@@ -75,6 +76,73 @@ model Question {
   drafts AnswerDraft[]
 }
 
+enum ProductInfoStatus {
+  DRAFT
+  VERIFIED
+}
+
+enum ProductInfoAction {
+  CREATED
+  UPDATED
+  VERIFIED
+  UNVERIFIED
+}
+
+/// Ürün bilgi kartı. Yalnızca `VERIFIED` kayıtlar AI taslağında kullanılır.
+///
+/// Eşleştirme anahtarı mağaza + ürün kimliğidir:
+/// - `productMainId`: ürünün varyantlarını birleştiren üst kimlik (zorunlu)
+/// - `productId`: tek bir varyantın kimliği (opsiyonel)
+/// Böylece bir varyantın bilgisi başka varyanta karışmaz.
+model ProductInfo {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  productMainId String
+  /// Varyant kimliği; boşsa bilgi ana ürün düzeyindedir.
+  productId String?
+
+  title      String?
+  /// Doğrulanmış özellikler: [{ "label": "Kumaş", "value": "Bambu dokulu tül" }]
+  attributes Json?
+  notes      String?
+
+  status     ProductInfoStatus @default(DRAFT)
+  verifiedBy String?
+  verifiedAt DateTime?
+  createdBy  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events       ProductInfoEvent[]
+  answerDrafts AnswerDraft[]
+
+  @@unique([storeId, productMainId, productId])
+  @@index([storeId, status])
+  @@index([productMainId])
+  @@map("product_infos")
+}
+
+/// Ürün bilgi kartındaki her değişikliğin geçmişi (kim, ne zaman, ne değişti).
+model ProductInfoEvent {
+  id            String      @id @default(cuid())
+  productInfoId String
+  productInfo   ProductInfo @relation(fields: [productInfoId], references: [id], onDelete: Cascade)
+
+  action  ProductInfoAction
+  actor   String
+  note    String?
+  /// Önceki değerler (değişiklik geçmişi); gizli bilgi içermez.
+  changes Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([productInfoId, createdAt])
+  @@map("product_info_events")
+}
+
 enum DraftStatus {
   PENDING
   APPROVED
@@ -117,6 +185,16 @@ model AnswerDraft {
   /// Üretimde kullanılan sağlayıcı/model (anahtar içermez)
   model         String?
   promptVersion String?
+
+  /// Taslakta kullanılan ürün bilgi kartı (varsa)
+  productInfoId String?
+  productInfo   ProductInfo? @relation(fields: [productInfoId], references: [id], onDelete: SetNull)
+  /// Eşleştirme sonucu: EXACT_VARIANT | MAIN_PRODUCT | AMBIGUOUS | MISSING
+  productMatch  String?
+  /// Taslakta kullanılan doğrulanmış bilgiler: [{ "label": "Kumaş", "value": "..." }]
+  usedFacts     Json?
+  /// Taslakta eksik/doğrulanmamış görünen bilgiler (insan onayı için)
+  missingInfo   Json?
 
   createdBy  String?
   approvedBy String?

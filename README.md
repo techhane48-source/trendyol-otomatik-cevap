@@ -186,6 +186,8 @@ başlatır ve migration'ları uygular. Kapsam:
 - **AI taslak katmanı**: prompt'un uydurmayı yasaklaması, ürün bilgisi yokken `VERİLMEDİ` işareti,
   guardrail'in ölçü/garanti/kargo iddialarını yakalaması, sağlayıcı fabrikası (`disabled` → hata,
   anahtarsız `openai-compatible` → hata), sahte `fetch` ile istek gövdesi/başlığı ve güvenli hata mesajları,
+- **ürün bilgi kartı**: oluşturma/doğrulama, düzenlemenin doğrulamayı sıfırlaması, değişiklik geçmişi,
+  eşleştirme (varyant/ana ürün/belirsiz/eksik) ve mağaza izolasyonu,
 - **taslak yaşam döngüsü**: revizyon artışı, eski revizyonun `SUPERSEDED` kalması, onaylayan+zaman kaydı,
   reddetme, uyarı kabulü olmadan onayın engellenmesi, sağlayıcı hatasında hiç kayıt oluşmaması,
   onay sırasında **hiçbir HTTP isteği atılmaması** (`fetch` casusu).
@@ -235,6 +237,49 @@ Anahtar hiçbir hata mesajına eklenmez; sağlayıcı hata gövdesi okunmaz/yans
 kaydı) tabloları **yalnızca eklenir**; mevcut `Store` / `Question` / `SyncRun` şeması değişmez.
 Migration: `npx prisma migrate deploy` (`20261110003430_answer_drafts`).
 
+## Ürün bilgi kartları ve eşleştirme
+
+`src/lib/products/matching.ts` (eşleştirme) + `src/lib/products/service.ts` (kayıt/doğrulama) +
+`src/app/products/` (panel).
+
+### Veri modeli
+
+- **ProductInfo** — `storeId` + `productMainId` (zorunlu) + `productId` (varyant, opsiyonel),
+  `title`, `attributes` (`[{label,value}]`), `notes`, `status` (`DRAFT`/`VERIFIED`),
+  `verifiedBy`, `verifiedAt`, `createdBy`
+- **ProductInfoEvent** — her işlem için `CREATED`/`UPDATED`/`VERIFIED`/`UNVERIFIED` + `changes`
+  (önceki ve sonraki değerler) → değişiklik geçmişi
+- `AnswerDraft`'a eklenen iz alanları: `productInfoId`, `productMatch`, `usedFacts`, `missingInfo`
+
+### Eşleştirme kuralları (varyant karışıklığına karşı)
+
+| Durum | Sonuç |
+| --- | --- |
+| Aynı mağaza + `productMainId` + `productId` | `EXACT_VARIANT` — kullanılır |
+| Aynı mağaza + `productMainId`, kayıt ana ürün düzeyinde | `MAIN_PRODUCT` — kullanılır |
+| Soruda varyant kimliği yok, ana ürün altında birden fazla varyant kaydı var | `AMBIGUOUS` — **bilgi kullanılmaz** |
+| Eşleşen kayıt yok / farklı mağaza | `MISSING` — bilgi kullanılmaz |
+
+- Yalnızca `VERIFIED` kartlar AI girdisi olur; `DRAFT` kart "doğrulanmamış" olarak raporlanır.
+- Başka mağazanın kaydı hiçbir koşulda kullanılmaz.
+
+### Panel (`/products`, oturum zorunlu)
+
+- Kart oluşturma (özellikler `Etiket: Değer` satırlarıyla), düzenleme, **doğrulama**, doğrulamayı kaldırma
+- Ürün kimliği / varyant kimliği / başlıkta arama, durum filtresi (`DRAFT` / `VERIFIED`)
+- Her kartta değişiklik geçmişi (kim, ne zaman, ne değişti)
+- Düzenleme doğrulanmış kartı yeniden `DRAFT` yapar → doğrulama her zaman güncel içerik için geçerlidir
+
+### AI entegrasyonu
+
+- `createAiDraft` önce eşleştirme yapar; doğrulanmış özellikler prompt'a `Etiket: Değer` olarak girer.
+- Guardrail'in "bilinen bilgi" listesi bu özelliklerle beslenir → doğrulanmış ölçü/özellik uyarı üretmez,
+  kart dışı iddia üretir.
+- Taslakta `usedFacts` (kullanılan bilgi + kaynağı: `VERIFIED_CARD` / `MANUAL`), `missingInfo`
+  (eksik/doğrulanmamış bilgiler) ve `productMatch` saklanır; `/drafts` panelinde gösterilir.
+
+> Ürün bilgi kartı da Trendyol'a hiçbir şey göndermez; yalnızca yerel bilgi tabanıdır.
+
 ## Proje yapısı
 
 ```
@@ -247,6 +292,8 @@ src/
     questions/page.tsx     Soru listesi ekranı
     drafts/page.tsx        Taslak paneli (AI oluştur / düzenle / onayla / reddet)
     drafts/actions.ts      Sunucu eylemleri (oturum kapısı + servis çağrıları)
+    products/page.tsx      Ürün bilgi kartları (oluştur / düzenle / doğrula / ara)
+    products/actions.ts    Ürün kartı sunucu eylemleri
     api/health/route.ts    Sağlık kontrolü
     api/questions/route.ts Sayfalı JSON liste
     api/sync/route.ts      Senkronizasyon tetikleyici (POST)
@@ -259,6 +306,8 @@ src/
     llm/guardrails.ts      Doğrulanmamış iddia tespiti + metin normalizasyonu
     llm/provider.ts        mock / openai-compatible sağlayıcı fabrikası
     drafts/service.ts      Taslak yaşam döngüsü + denetim kaydı (Trendyol'a yazma YOK)
+    products/matching.ts   Mağaza + ürün kimliğiyle güvenli eşleştirme (varyant koruması)
+    products/service.ts    Ürün bilgi kartı CRUD, doğrulama, değişiklik geçmişi
     trendyol/client.ts     HTTP istemcisi + tekrar politikası
     trendyol/schemas.ts    API yanıt şemaları + normalize
     trendyol/sync.ts       Sayfalama, upsert, SyncRun

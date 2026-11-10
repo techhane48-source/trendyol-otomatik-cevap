@@ -13,6 +13,7 @@ import {
 import { resetEnvCache } from "@/lib/env";
 import { createMockProvider } from "@/lib/llm/provider";
 import { LlmNotConfiguredError, LlmRequestError } from "@/lib/llm/types";
+import { createProductInfo, verifyProductInfo } from "@/lib/products/service";
 import { disconnectPrisma, getPrisma } from "@/lib/prisma";
 
 const prisma = getPrisma();
@@ -25,11 +26,15 @@ const provider = createMockProvider(
 async function resetDatabase(): Promise<void> {
   await prisma.draftEvent.deleteMany();
   await prisma.answerDraft.deleteMany();
+  await prisma.productInfoEvent.deleteMany();
+  await prisma.productInfo.deleteMany();
   await prisma.question.deleteMany();
   await prisma.store.deleteMany();
 }
 
-async function seedQuestion(overrides: { productName?: string | null } = {}): Promise<string> {
+async function seedQuestion(
+  overrides: { productName?: string | null; productMainId?: string | null; productId?: string | null } = {},
+): Promise<string> {
   const store = await prisma.store.create({ data: { sellerId: 1081168n } });
   const question = await prisma.question.create({
     data: {
@@ -39,7 +44,8 @@ async function seedQuestion(overrides: { productName?: string | null } = {}): Pr
       status: "WAITING_FOR_ANSWER",
       rawStatus: "WAITING_FOR_ANSWER",
       productName: overrides.productName === undefined ? "Nevresim Takımı" : overrides.productName,
-      productMainId: "MAIN-1",
+      productMainId: overrides.productMainId === undefined ? "MAIN-1" : overrides.productMainId,
+      productId: overrides.productId === undefined ? "VAR-1" : overrides.productId,
       askedAt: new Date("2026-11-01T09:00:00Z"),
     },
   });
@@ -283,5 +289,140 @@ describe("onaylama ve reddetme", () => {
     await expect(
       approveDraft({ draftId: draft.id, actor: { name: "" } }, { prisma }),
     ).rejects.toBeInstanceOf(DraftAccessError);
+  });
+});
+
+describe("ürün bilgisi entegrasyonu", () => {
+  async function seedCardFor(
+    questionId: string,
+    options: { attributes: Array<{ label: string; value: string }>; verify?: boolean; productId?: string | null },
+  ) {
+    const question = await prisma.question.findUniqueOrThrow({ where: { id: questionId } });
+    const card = await createProductInfo(
+      {
+        storeId: question.storeId,
+        productMainId: question.productMainId as string,
+        productId: options.productId === undefined ? question.productId : options.productId,
+        title: question.productName,
+        attributes: options.attributes,
+        actor,
+      },
+      { prisma },
+    );
+
+    if (options.verify !== false) {
+      return verifyProductInfo({ id: card.id, actor }, { prisma });
+    }
+    return card;
+  }
+
+  it("doğrulanmış kart bilgisi prompt'a girer ve taslakta kaynak olarak saklanır", async () => {
+    const questionId = await seedQuestion();
+    const card = await seedCardFor(questionId, {
+      attributes: [
+        { label: "Kumaş", value: "Bambu dokulu tül" },
+        { label: "Karartma", value: "Blackout değil" },
+      ],
+    });
+
+    let capturedPrompt = "";
+    const capturing = createMockProvider((messages) => {
+      capturedPrompt = messages.user;
+      return "Ürünümüz blackout değildir; bambu dokulu tüldür.";
+    });
+
+    const draft = await createAiDraft({ questionId, actor }, { prisma, provider: capturing });
+
+    expect(capturedPrompt).toContain("Bambu dokulu tül");
+    expect(capturedPrompt).not.toContain("doğrulanmış ek bilgi YOK");
+
+    expect(draft.productInfoId).toBe(card.id);
+    expect(draft.productMatch).toBe("EXACT_VARIANT");
+    expect(draft.usedFacts).toHaveLength(2);
+    expect(draft.usedFacts[0].source).toBe("VERIFIED_CARD");
+    expect(draft.missingInfo).toHaveLength(0);
+  });
+
+  it("doğrulanmamış kart kullanılmaz ve eksik olarak raporlanır", async () => {
+    const questionId = await seedQuestion();
+    await seedCardFor(questionId, {
+      attributes: [{ label: "Kumaş", value: "Bambu dokulu tül" }],
+      verify: false,
+    });
+
+    let capturedPrompt = "";
+    const capturing = createMockProvider((messages) => {
+      capturedPrompt = messages.user;
+      return "Bilgiyi kontrol edip ileteceğiz.";
+    });
+
+    const draft = await createAiDraft({ questionId, actor }, { prisma, provider: capturing });
+
+    expect(capturedPrompt).toContain("Ek ürün bilgisi: VERİLMEDİ");
+    expect(draft.productInfoId).toBeNull();
+    expect(draft.productMatch).toBe("EXACT_VARIANT");
+    expect(draft.usedFacts).toHaveLength(0);
+    expect(draft.missingInfo.join(" ")).toContain("doğrulanmamış");
+  });
+
+  it("varyant belirsizse bilgi kullanılmaz (AMBIGUOUS)", async () => {
+    const questionId = await seedQuestion({ productId: null });
+    const question = await prisma.question.findUniqueOrThrow({ where: { id: questionId } });
+
+    for (const variantId of ["VAR-1", "VAR-2"]) {
+      const card = await createProductInfo(
+        {
+          storeId: question.storeId,
+          productMainId: "MAIN-1",
+          productId: variantId,
+          attributes: [{ label: "Kumaş", value: `Kumaş ${variantId}` }],
+          actor,
+        },
+        { prisma },
+      );
+      await verifyProductInfo({ id: card.id, actor }, { prisma });
+    }
+
+    const draft = await createAiDraft({ questionId, actor }, { prisma, provider });
+
+    expect(draft.productMatch).toBe("AMBIGUOUS");
+    expect(draft.productInfoId).toBeNull();
+    expect(draft.usedFacts).toHaveLength(0);
+    expect(draft.missingInfo.join(" ")).toContain("Varyant belirsiz");
+  });
+
+  it("başka mağazanın kartı kullanılmaz", async () => {
+    const questionId = await seedQuestion();
+    const otherStore = await prisma.store.create({ data: { sellerId: 2000001n } });
+    const card = await createProductInfo(
+      {
+        storeId: otherStore.id,
+        productMainId: "MAIN-1",
+        productId: "VAR-1",
+        attributes: [{ label: "Kumaş", value: "Başka mağaza kumaşı" }],
+        actor,
+      },
+      { prisma },
+    );
+    await verifyProductInfo({ id: card.id, actor }, { prisma });
+
+    const draft = await createAiDraft({ questionId, actor }, { prisma, provider });
+
+    expect(draft.productMatch).toBe("MISSING");
+    expect(draft.usedFacts).toHaveLength(0);
+    expect(draft.productInfoId).toBeNull();
+  });
+
+  it("doğrulanmış özellik uyarı üretmez, kart dışı iddia üretir", async () => {
+    const questionId = await seedQuestion();
+    await seedCardFor(questionId, { attributes: [{ label: "Genişlik", value: "200 cm" }] });
+
+    const grounded = createMockProvider(() => "Ürün 200 cm genişliğindedir.");
+    const groundedDraft = await createAiDraft({ questionId, actor }, { prisma, provider: grounded });
+    expect(groundedDraft.warnings).toHaveLength(0);
+
+    const fabricating = createMockProvider(() => "Ürün 200 cm genişliğinde ve 5 yıl garantilidir.");
+    const fabricatedDraft = await createAiDraft({ questionId, actor }, { prisma, provider: fabricating });
+    expect(fabricatedDraft.warnings.map((warning) => warning.kind)).toContain("WARRANTY");
   });
 });

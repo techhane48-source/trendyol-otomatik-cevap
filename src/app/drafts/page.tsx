@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
-import { getDraftHistory, listQuestionsForDrafting, type DraftView } from "@/lib/drafts/service";
+import { getDraftHistory, listQuestionsForDrafting, toDraftView, type DraftView } from "@/lib/drafts/service";
 import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
 
@@ -31,6 +31,18 @@ const STATUS_LABELS: Record<DraftView["status"], string> = {
   APPROVED: "Onaylandı",
   REJECTED: "Reddedildi",
   SUPERSEDED: "Geçersiz (yeni revizyon)",
+};
+
+const MATCH_LABELS: Record<string, string> = {
+  EXACT_VARIANT: "Varyant eşleşmesi (kesin)",
+  MAIN_PRODUCT: "Ana ürün eşleşmesi",
+  AMBIGUOUS: "Varyant belirsiz — bilgi kullanılmadı",
+  MISSING: "Ürün kaydı yok — bilgi kullanılmadı",
+};
+
+const FACT_SOURCE_LABELS: Record<string, string> = {
+  VERIFIED_CARD: "Doğrulanmış kart",
+  MANUAL: "Elle girilen bilgi",
 };
 
 const MESSAGES: Record<string, string> = {
@@ -131,7 +143,8 @@ export default async function DraftsPage({
       <h1>Taslaklar</h1>
       <p className="subtitle">
         AI önerisi + insan onayı. Onay yalnızca yerel kaydı değiştirir; <strong>Trendyol'a cevap
-        gönderilmez.</strong>
+        gönderilmez.</strong>{" "}
+        <a href="/products">Ürün bilgileri →</a>
       </p>
 
       <div className="card" style={{ marginBottom: 12 }}>
@@ -172,7 +185,7 @@ export default async function DraftsPage({
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           {rows.map((row) => {
-            const latest = row.drafts[0] as unknown as DraftView | undefined;
+            const latest = row.drafts[0] ? toDraftView(row.drafts[0] as never) : undefined;
             const history = histories.get(row.id) ?? [];
             const warnings = latest?.warnings ?? [];
 
@@ -192,6 +205,37 @@ export default async function DraftsPage({
                       {latest.approvedBy ? ` · onaylayan: ${latest.approvedBy}` : ""}
                       {latest.approvedAt ? ` · ${formatDate(latest.approvedAt)}` : ""}
                     </div>
+
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                      Ürün eşleşmesi: {MATCH_LABELS[latest.productMatch ?? ""] ?? latest.productMatch ?? "—"}
+                    </div>
+
+                    {latest.usedFacts.length > 0 ? (
+                      <div style={{ marginBottom: 8, fontSize: 13 }}>
+                        <strong>Kullanılan bilgiler:</strong>
+                        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                          {latest.usedFacts.map((fact) => (
+                            <li key={`${fact.label}-${fact.value}`}>
+                              {fact.label}: {fact.value}
+                              <span className="muted" style={{ fontSize: 12 }}>
+                                {" "}· {FACT_SOURCE_LABELS[fact.source ?? ""] ?? fact.source}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    {latest.missingInfo.length > 0 ? (
+                      <div style={{ marginBottom: 8, fontSize: 13 }}>
+                        <strong>Eksik / doğrulanmamış:</strong>
+                        <ul className="muted" style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                          {latest.missingInfo.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
 
                     {warnings.length > 0 ? (
                       <div
