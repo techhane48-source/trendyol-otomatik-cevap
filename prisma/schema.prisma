@@ -71,6 +71,84 @@ model Question {
   @@index([storeId, status])
   @@index([askedAt])
   @@map("questions")
+
+  drafts AnswerDraft[]
+}
+
+enum DraftStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum DraftSource {
+  AI
+  HUMAN_EDIT
+}
+
+enum DraftAction {
+  CREATED
+  EDITED
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+/// Cevap taslağı. Her düzenleme YENİ bir revizyon oluşturur; eski revizyonlar silinmez.
+/// Bu tablo Trendyol'a hiçbir şey göndermez: onay yalnızca yerel durumu değiştirir.
+model AnswerDraft {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  storeId    String
+
+  /// Soru bazında 1'den başlayan revizyon numarası
+  revision Int
+  status   DraftStatus @default(PENDING)
+  source   DraftSource @default(AI)
+
+  /// Taslak metni (onaylandığında da değişmez; düzenleme yeni revizyon açar)
+  text String
+
+  /// Ürün bilgisi yokken metinde geçen doğrulanmamış ölçü/özellik iddiaları
+  warnings Json?
+
+  /// Üretimde kullanılan sağlayıcı/model (anahtar içermez)
+  model         String?
+  promptVersion String?
+
+  createdBy  String?
+  approvedBy String?
+  approvedAt DateTime?
+  rejectedBy String?
+  rejectedAt DateTime?
+  /// Onay/red sırasında girilen açıklama (uyarıların kabulü dahil)
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events DraftEvent[]
+
+  @@unique([questionId, revision])
+  @@index([questionId, status])
+  @@index([storeId, status])
+  @@map("answer_drafts")
+}
+
+/// Taslak üzerindeki her işlemin denetim kaydı (kim, ne zaman, ne yaptı).
+model DraftEvent {
+  id      String      @id @default(cuid())
+  draftId String
+  draft   AnswerDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  action  DraftAction
+  actor   String
+  note    String?
+  createdAt DateTime  @default(now())
+
+  @@index([draftId, createdAt])
+  @@map("draft_events")
 }
 
 enum SyncRunStatus {

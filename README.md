@@ -182,7 +182,58 @@ başlatır ve migration'ları uygular. Kapsam:
 - erişim kapısı: anahtarsız/yanlış anahtar 401, üretimde anahtarsız 503, doğru anahtar kabul,
 - upsert ile kopya oluşmaması, güncelleme tazeliği,
 - `SyncRun` başarı/`PARTIAL`/`FAILED` kayıtları,
-- HTTP katmanından veritabanına uçtan uca akış.
+- HTTP katmanından veritabanına uçtan uca akış,
+- **AI taslak katmanı**: prompt'un uydurmayı yasaklaması, ürün bilgisi yokken `VERİLMEDİ` işareti,
+  guardrail'in ölçü/garanti/kargo iddialarını yakalaması, sağlayıcı fabrikası (`disabled` → hata,
+  anahtarsız `openai-compatible` → hata), sahte `fetch` ile istek gövdesi/başlığı ve güvenli hata mesajları,
+- **taslak yaşam döngüsü**: revizyon artışı, eski revizyonun `SUPERSEDED` kalması, onaylayan+zaman kaydı,
+  reddetme, uyarı kabulü olmadan onayın engellenmesi, sağlayıcı hatasında hiç kayıt oluşmaması,
+  onay sırasında **hiçbir HTTP isteği atılmaması** (`fetch` casusu).
+
+## AI taslak ve insan onayı
+
+`src/lib/llm/` (sağlayıcı bağımsız) + `src/lib/drafts/service.ts` (iş kuralları) + `src/app/drafts/` (panel).
+
+### Yapılandırma (yalnızca ortam değişkenleri)
+
+| Değişken | Açıklama |
+| --- | --- |
+| `LLM_PROVIDER` | `disabled` (varsayılan) · `mock` · `openai-compatible` |
+| `LLM_BASE_URL` | OpenAI uyumlu API kökü (ör. `https://api.openai.com/v1`) |
+| `LLM_API_KEY` | **Yalnızca `.env` içinde**; koda/loga/DB'ye yazılmaz |
+| `LLM_MODEL` | Model adı (ör. `gpt-4o-mini`) |
+| `LLM_TIMEOUT_MS` / `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | İstek sınırları |
+| `LLM_PROMPT_VERSION` | Taslakla birlikte saklanan prompt sürümü |
+| `ADMIN_ACTOR_NAME` | Onaylayan/reddeden kişi adı (tek kiracılı kurulum) |
+
+`LLM_PROVIDER=disabled` iken AI taslak düğmesi pasiftir ve panel nedeni açıkça yazar.
+Anahtar hiçbir hata mesajına eklenmez; sağlayıcı hata gövdesi okunmaz/yansıtılmaz.
+
+### Uydurma engeli (madde 4)
+
+1. **Prompt**: ürün bilgisi verilmediyse `Ek ürün bilgisi: VERİLMEDİ` işareti ve "somut özellik/ölçü/
+   garanti/kargo yazma" talimatı gönderilir.
+2. **Guardrail**: üretilen metinde ölçü/garanti/kargo/kumaş/stok iddiası varsa ve doğrulanmış bilgide
+   karşılığı yoksa `AnswerDraft.warnings` alanına yazılır ve panelde gösterilir.
+3. **Onay kilidi**: uyarı varken onay, "Uyarıları kabul ediyorum" işaretlenmeden **yapılamaz**
+   (`DraftWarningsUnacknowledgedError`); kabul edilirse bu durum `reviewNote` ve denetim kaydına yazılır.
+
+### Panel işlemleri (`/drafts`, oturum zorunlu)
+
+- **AI Taslak Oluştur** — isteğe bağlı "doğrulanmış ürün bilgisi" alanıyla
+- **Düzenle** — yeni revizyon açar, eski revizyon `SUPERSEDED` olarak **korunur**
+- **Onayla** — durum `APPROVED`, `approvedBy`, `approvedAt` yazılır
+- **Reddet** — durum `REJECTED`, `rejectedBy`, `rejectedAt` yazılır
+- Her işlem `draft_events` tablosuna (kim, ne zaman, ne yaptı) kaydedilir.
+
+> **Trendyol'a hiçbir şey gönderilmez.** Onay yalnızca veritabanındaki taslağın durumunu değiştirir;
+> projede cevap gönderme endpoint'i yoktur ve eklenmemiştir.
+
+### Veri modeli
+
+`AnswerDraft` (revizyon + durum + metin + uyarılar + onay/red bilgileri) ve `DraftEvent` (denetim
+kaydı) tabloları **yalnızca eklenir**; mevcut `Store` / `Question` / `SyncRun` şeması değişmez.
+Migration: `npx prisma migrate deploy` (`20261110003430_answer_drafts`).
 
 ## Proje yapısı
 
@@ -194,6 +245,8 @@ prisma7.config.ts          Prisma CLI konfigürasyonu (DATABASE_URL)
 src/
   app/
     questions/page.tsx     Soru listesi ekranı
+    drafts/page.tsx        Taslak paneli (AI oluştur / düzenle / onayla / reddet)
+    drafts/actions.ts      Sunucu eylemleri (oturum kapısı + servis çağrıları)
     api/health/route.ts    Sağlık kontrolü
     api/questions/route.ts Sayfalı JSON liste
     api/sync/route.ts      Senkronizasyon tetikleyici (POST)
@@ -201,6 +254,11 @@ src/
     env.ts                 Zod ile ortam doğrulaması
     logger.ts              Gizli bilgi maskeleyen logger
     prisma.ts              Prisma istemcisi (driver adapter)
+    llm/types.ts           Sağlayıcı arayüzü ve hata tipleri
+    llm/prompt.ts          Uydurmayı yasaklayan prompt kuralları
+    llm/guardrails.ts      Doğrulanmamış iddia tespiti + metin normalizasyonu
+    llm/provider.ts        mock / openai-compatible sağlayıcı fabrikası
+    drafts/service.ts      Taslak yaşam döngüsü + denetim kaydı (Trendyol'a yazma YOK)
     trendyol/client.ts     HTTP istemcisi + tekrar politikası
     trendyol/schemas.ts    API yanıt şemaları + normalize
     trendyol/sync.ts       Sayfalama, upsert, SyncRun

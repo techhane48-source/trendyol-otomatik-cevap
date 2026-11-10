@@ -45,6 +45,27 @@ const envSchema = z.object({
   ),
 
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+
+  // ---------------------------------------------------------------------------
+  // LLM (cevap taslağı üretimi). Anahtar SADECE .env içinde tutulur.
+  // `disabled` (varsayılan): AI taslak üretimi kapalı, panelde açıkça bildirilir.
+  // ---------------------------------------------------------------------------
+  LLM_PROVIDER: z.enum(["mock", "openai-compatible", "disabled"]).default("disabled"),
+  /** OpenAI uyumlu API kökü (ör. https://api.openai.com/v1). Anahtar içermez. */
+  LLM_BASE_URL: z.string().url("geçerli bir URL olmalı").default("https://api.openai.com/v1"),
+  LLM_API_KEY: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+  LLM_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
+  LLM_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(20_000),
+  LLM_MAX_TOKENS: z.coerce.number().int().min(64).max(4_096).default(600),
+  LLM_TEMPERATURE: z.coerce.number().min(0).max(1.5).default(0.2),
+  /** Prompt sürümü: üretilen taslağın hangi kurallarla yazıldığını izlemek için. */
+  LLM_PROMPT_VERSION: z.string().trim().min(1).default("v1"),
+
+  /** Onaylayan/reddeden kişinin adı (tek kiracılı kurulumda kimlik yerine geçer). */
+  ADMIN_ACTOR_NAME: z.string().trim().min(1).default("admin"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

@@ -142,7 +142,8 @@ export default async function QuestionsPage({
     <>
       <h1>Sorular</h1>
       <p className="subtitle">
-        Son 50 soru — yalnızca <code>GET /questions/filter</code> ile okunur, cevap gönderilmez.
+        Son 50 soru — yalnızca <code>GET /questions/filter</code> ile okunur, cevap gönderilmez.{" "}
+        <a href="/drafts">Taslak paneli →</a>
       </p>
 
       {loginError ? (
