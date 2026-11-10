@@ -623,3 +623,73 @@ npx tsx scripts/history-compare.mts --onay  # 10 soruda hafızalı/hafızasız k
 
 Karşılaştırma puanları **otomatiktir** (uzunluk, genel/kaçamak ifade sayısı, `STALE`/`NEEDS_INFO`), insan
 değerlendirmesinin yerine geçmez. Ölçüm taslakları iş bitiminde silinir; gerçek sorular değişmez.
+
+## Ürün bilgi bankası ve toplu doğrulama (GÖREV 009)
+
+### Ürün listesi
+
+`/product-bank` en çok soru gelen **10 ürünü** gösterir: `productMainId`, ürün adı (sorulardan), soru/cevap sayısı,
+varyant kimlikleri, kart durumu ve doğrulanmış alan sayısı. Ürün adı veride yoksa **uydurulmaz**.
+Trendyol katalog API'si (`GET /integration/product/sellers/{sellerId}/products`) salt okunur olarak kullanılabilir;
+bu sürümde adlar soru verisinden gelir. Varyantlar `productId` ile ayrı tutulur, ana ürün altında yanlış birleştirilmez.
+
+### Alan bazında doğrulama
+
+10 alan: kumaş türü, pile oranı, dikim şekli, karartma seviyesi, kurşunlu etek, ütü/yıkama, montaj, özel ölçü,
+renkler, açıklama. Her alan kendi `verified`, `verifiedBy`, `verifiedAt`, `source` bilgisini taşır.
+
+- Bir alanı doğrulamak **diğer alanları doğrulamaz** (`verifyField`).
+- Değer değişirse doğrulama düşer (`setField` → `verified=false`).
+- AI yalnızca `verified=true` alanları "doğrulanmış bilgi" sayar; kart `DRAFT` olsa bile doğrulanmış alan kullanılır,
+  `verified=false` alan **hiç kullanılmaz**.
+- Toplu düzenleme (`bulkSetField`) ve CSV içe aktarma **doğrulanmamış** yazar; doğrulama ayrı adımdır.
+
+### CSV
+
+`/product-bank/csv` (oturumlu) tüm kartları indirir. İçe aktarma kolonları:
+`productMainId, productId, fabric, pleat, sewing, blackout, weightedHem, care, mounting, customSize, colors, description`.
+Türkçe karakterler ve tırnaklı alanlar desteklenir; `productMainId` zorunludur.
+
+### Geçmiş cevaplardan öneri
+
+Son 87 soru-cevaptan kural tabanlı adaylar çıkarılır (`src/lib/products/suggestions.ts`): kumaş/pile/ölçü/renk/
+yıkama/montaj kategorileri. Fiyat, stok, teslimat, iade ve sipariş cevapları **kalıcı özelliğe dönüştürülmez**.
+Her öneri kaynak soru kimliklerini taşır; aynı alanda farklı değerler **çelişki** olarak işaretlenir.
+Kabul edilen öneri bile alana **doğrulanmamış** olarak yazılır — doğrulama insan adımıdır.
+
+Gerçek veride üretim: 9 ürün · **21 öneri** · **14 çelişki** (ör. aynı ürün için "özel ölçü yapamıyoruz" ↔
+"ölçülerimiz EN × BOY şeklindedir").
+
+### Hafıza kalitesi
+
+Sorular kategoriye ayrılır (`MEASURE, PLEAT, FABRIC, COLOR, WASH, MOUNT, ORDER, RETURN, SHIPPING, OTHER`).
+Geçmiş cevap aramasında yalnızca aynı/yakın kategori kullanılır: ölçü sorusuna kargo cevabı girmez.
+`UNREVIEWED` cevap doğrulanmış gerçek sayılmaz; güncel doğrulanmış kart her zaman önceliklidir.
+
+### Taslak entegrasyonu
+
+- `usedFacts` yalnızca doğrulanmış alanları taşır (`source: VERIFIED_CARD`); kartta/alanlarda kaynak ve tarih görünür.
+- `missingInfo` eksik alanları **alan adıyla** listeler (ör. "Pile oranı"), yalnızca eksik alan için NEEDS_INFO üretilir.
+- `resolution`: `RESOLVED` (doğrulanmış bilgiyle, vaat/stale uyarısı yok) · `GENERIC` (bilgi yok) · `NEEDS_INFO`.
+- Sipariş değişikliği kuralları (GÖREV 007/008) aynen korunur; canlı durum ve sahiplik doğrulaması değişmedi.
+
+### Erişim kapısı (sıkılaştırıldı)
+
+`APP_ACCESS_TOKEN` boşsa uygulama **her ortamda** 503 döner (geliştirmede açık kapı yok). Anahtar tanımlıysa
+Bearer veya `ty_access` çerezi gerekir. Bu değişiklik testlerde de anahtar zorunlu kılar (`vitest.config.ts`).
+
+### Ölçüm (gerçek çıktı)
+
+```
+npx tsx scripts/product-quality.mts --onay --phase baseline   # gerçek 10 soru, kart yok
+npx tsx scripts/product-quality.mts --onay --synthetic        # SENTETİK A/B mekanizma kanıtı
+```
+
+| Ölçüm | RESOLVED | Kaçamak | NEEDS_INFO | Yanlış iddia | Ort. uzunluk |
+| --- | --- | --- | --- | --- | --- |
+| Gerçek 10 soru, doğrulanmış alan **0** | 0/10 | 9 | 0 | 0 | 98 kr |
+| Sentetik A: kart yok | 0/4 | 4 | 0 | 0 | 82 kr |
+| Sentetik B: 2 alan doğrulandı | **4/4 (%100)** | 0 | 0 | 0 | 70 kr |
+
+Gerçek veride doğrulanmış alan olmadığı için kalite artışı **iddia edilmiyor**; sentetik A/B yalnızca mekanizmanın
+çalıştığını gösterir. Gerçek artış, `/product-bank` ekranından alanlar doğrulandıktan sonra `--phase after` ile ölçülür.

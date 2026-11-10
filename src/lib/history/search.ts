@@ -1,4 +1,5 @@
 import { getPrisma } from "@/lib/prisma";
+import { classifyQuestion, relatedCategories, type QuestionCategory } from "@/lib/history/categories";
 import type { PrismaClient } from "@/generated/prisma/client";
 
 /**
@@ -18,6 +19,7 @@ export interface HistoryMatch {
   trendyolQuestionId: string;
   text: string;
   answerText: string;
+  category: QuestionCategory;
   similarity: number;
   keywordOverlap: number;
   score: number;
@@ -34,6 +36,11 @@ export interface SearchInput {
   excludeQuestionId?: string | null;
   limit?: number;
   minScore?: number;
+  /**
+   * Yalnızca bu kategorilerdeki geçmiş cevaplar kullanılır (varsayılan: sorunun kendi
+   * kategorisi ve yakın kategoriler). Alakasız kategoriler bağlama girmez.
+   */
+  categories?: QuestionCategory[];
 }
 
 const STOPWORDS = new Set([
@@ -96,6 +103,8 @@ export async function searchHistoricalAnswers(
 ): Promise<HistoryMatch[]> {
   const prisma = deps.prisma ?? getPrisma();
   const keywords = extractKeywords(input.text);
+  const category = classifyQuestion(input.text);
+  const allowed = input.categories ?? relatedCategories(category);
   const patterns = keywords.map((keyword) => `%${keyword}%`);
 
   const rows = await prisma.$queryRaw<Row[]>`
@@ -147,9 +156,11 @@ export async function searchHistoricalAnswers(
         productMatch,
         reviewStatus: row.answerReviewStatus,
         askedAt: row.askedAt,
+        category: classifyQuestion(row.text),
         reason: reasons.join(" · ") || "zayıf eşleşme",
       };
     })
+    .filter((match) => allowed.includes(match.category))
     .filter((match) => match.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);

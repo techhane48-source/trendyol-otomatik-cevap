@@ -344,7 +344,8 @@ describe("ürün bilgisi entegrasyonu", () => {
     expect(draft.productMatch).toBe("EXACT_VARIANT");
     expect(draft.usedFacts).toHaveLength(2);
     expect(draft.usedFacts[0].source).toBe("VERIFIED_CARD");
-    expect(draft.missingInfo).toHaveLength(0);
+    // Doğrulanmış kartta bile alan bazlı eksikler raporlanır; "bilgi yok" uyarısı olmamalı.
+    expect(draft.missingInfo).not.toContain("Doğrulanmış ürün özelliği bulunmuyor.");
   });
 
   it("doğrulanmamış kart kullanılmaz ve eksik olarak raporlanır", async () => {

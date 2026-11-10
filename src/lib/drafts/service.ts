@@ -14,6 +14,7 @@ import { computeCostUSD, resolvePricing } from "./../llm/usage";
 import { buildOrderGuidance, detectOrderClaimViolations, type OrderChangeState } from "@/lib/orders/ai-guidance";
 import { isUsableForDraft, matchProductInfo } from "@/lib/products/matching";
 import { findProductInfoForQuestion, type ProductAttribute } from "@/lib/products/service";
+import { FIELD_DEFS, verifiedAttributes } from "@/lib/products/bank";
 
 /**
  * Taslak (AI önerisi + insan onayı) servisi.
@@ -90,6 +91,8 @@ export interface DraftView {
   totalTokens: number | null;
   estimatedCostUSD: number | null;
   usageEstimated: boolean;
+  /** RESOLVED: doğrulanmış bilgiyle cevaplandı · GENERIC: bilgi yok · NEEDS_INFO: onaya kapalı */
+  resolution: "RESOLVED" | "NEEDS_INFO" | "GENERIC";
   /** Taslakta yararlanılan geçmiş cevaplar (soru kimliği + gerekçe) */
   historyUsed: Array<{
     questionId: string;
@@ -154,6 +157,7 @@ function toView(draft: {
   estimatedCostUSD?: number | null;
   usageEstimated?: boolean | null;
   historyUsed?: unknown;
+  resolution?: string | null;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -178,6 +182,7 @@ function toView(draft: {
     estimatedCostUSD: draft.estimatedCostUSD ?? null,
     usageEstimated: draft.usageEstimated ?? false,
     historyUsed: Array.isArray(draft.historyUsed) ? (draft.historyUsed as DraftView["historyUsed"]) : [],
+    resolution: (draft.resolution as DraftView["resolution"]) ?? "GENERIC",
   };
 }
 
@@ -228,10 +233,16 @@ export async function createAiDraft(
   let matchedProductId: string | null = null;
   let cardFacts: ProductAttribute[] = [];
 
-  if ((match.kind === "EXACT_VARIANT" || match.kind === "MAIN_PRODUCT") && isUsableForDraft(match)) {
-    matchedProductId = match.product.id;
+  if (match.kind === "EXACT_VARIANT" || match.kind === "MAIN_PRODUCT") {
     const card = candidates.find((candidate) => candidate.id === match.product.id);
-    cardFacts = Array.isArray(card?.attributes) ? (card.attributes as unknown as ProductAttribute[]) : [];
+    // Alan bazında doğrulama: yalnızca `verified=true` alanlar (veya eski kayıtlarda
+    // kart düzeyinde VERIFIED) doğrulanmış bilgi sayılır. Alan doğrulanmışsa kart
+    // DRAFT olsa bile o alan kullanılabilir (kısmi doğrulama).
+    const verified = verifiedAttributes(card?.attributes, (card?.status as "DRAFT" | "VERIFIED") ?? "DRAFT");
+    if (isUsableForDraft(match) || verified.length > 0) {
+      matchedProductId = match.product.id;
+      cardFacts = verified.map((attribute) => ({ label: attribute.label, value: attribute.value }));
+    }
   }
 
   const usedFacts = [
@@ -248,6 +259,23 @@ export async function createAiDraft(
     missingInfo.push("Ürün bilgi kartı doğrulanmamış (DRAFT); bilgi kullanılmadı.");
   }
   if (usedFacts.length === 0) missingInfo.push("Doğrulanmış ürün özelliği bulunmuyor.");
+
+  // Alan bazlı eksikler: doğrulanmış kartta hangi alanlar boş/doğrulanmamış?
+  if (matchedProductId) {
+    const card = candidates.find((candidate) => candidate.id === matchedProductId);
+    const attributes = Array.isArray(card?.attributes) ? (card!.attributes as unknown as Array<{ key?: string; label?: string; verified?: boolean; value?: string }>) : [];
+    const verifiedLabels = new Set(
+      attributes.filter((attribute) => attribute.verified === true).map((attribute) => attribute.key ?? attribute.label),
+    );
+    const missingFields = FIELD_DEFS.filter((field) => {
+      const attribute = attributes.find((item) => (item.key ?? item.label) === field.key);
+      return !attribute || !attribute.value || !verifiedLabels.has(field.key);
+    }).map((field) => field.label);
+
+    if (missingFields.length > 0) {
+      missingInfo.push(`Doğrulanmamış alanlar: ${missingFields.join(", ")}.`);
+    }
+  }
 
   const productInfoText =
     usedFacts.length > 0 ? usedFacts.map((fact) => `${fact.label}: ${fact.value}`).join("\n") : null;
@@ -381,6 +409,15 @@ export async function createAiDraft(
   const needsInfo = (hasUnverifiedPromise && usedFacts.length === 0) || historyUsage.blocksApproval;
   const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
 
+  // Çözüm sınıfı: doğrulanmış bilgiyle ve vaat/uyarı olmadan cevaplandıysa RESOLVED.
+  const blockingWarnings = warnings.filter((warning) => warning.kind === "PROMISE" || warning.kind === "STALE");
+  const resolution: "RESOLVED" | "NEEDS_INFO" | "GENERIC" =
+    draftStatus === "NEEDS_INFO"
+      ? "NEEDS_INFO"
+      : usedFacts.length > 0 && blockingWarnings.length === 0
+        ? "RESOLVED"
+        : "GENERIC";
+
   const draft = await prisma.$transaction(async (tx) => {
     const last = await tx.answerDraft.findFirst({
       where: { questionId: question.id },
@@ -424,6 +461,7 @@ export async function createAiDraft(
         totalTokens: completion.usage.totalTokens,
         estimatedCostUSD: costUSD,
         usageEstimated: completion.usage.estimated,
+        resolution,
         historyUsed:
           historyMatches.length > 0
             ? (historyMatches.map((match) => ({

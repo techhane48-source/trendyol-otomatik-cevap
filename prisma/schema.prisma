@@ -23,6 +23,7 @@ model Store {
   questions Question[]
   syncRuns  SyncRun[]
   productInfos ProductInfo[]
+  fieldSuggestions ProductFieldSuggestion[]
 
   @@map("stores")
 }
@@ -133,6 +134,33 @@ model ProductInfo {
 }
 
 /// Ürün bilgi kartındaki her değişikliğin geçmişi (kim, ne zaman, ne değişti).
+/// Geçmiş satıcı cevaplarından çıkarılan ürün alanı adayı. İnsan onayı olmadan doğrulanmış sayılmaz.
+model ProductFieldSuggestion {
+  id         String   @id @default(cuid())
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productMainId String
+  productId  String?
+
+  fieldKey   String
+  value      String
+  /// Kaynak soru kimlikleri (Trendyol)
+  sourceQuestionIds Json
+  /// Aynı alan için çelişen değer var mı?
+  conflict   Boolean  @default(false)
+  conflictValues Json?
+  status     SuggestionStatus @default(PENDING)
+  reviewedBy String?
+  reviewedAt DateTime?
+  note       String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([storeId, productMainId, status])
+  @@map("product_field_suggestions")
+}
+
 model ProductInfoEvent {
   id            String      @id @default(cuid())
   productInfoId String
@@ -215,6 +243,8 @@ model AnswerDraft {
 
   /// Taslakta yararlanılan geçmiş cevaplar (soru kimliği + benzerlik + gerekçe)
   historyUsed      Json?
+  /// Doğrulanmış bilgiyle cevaplandı mı?
+  resolution       DraftResolution?
 
   createdBy  String?
   approvedBy String?
@@ -438,6 +468,20 @@ enum AnswerReviewStatus {
   VERIFIED
   WRONG
   OUTDATED
+}
+
+/// Taslak çözüm sınıfı: doğrulanmış bilgiyle mi cevaplandı?
+enum DraftResolution {
+  RESOLVED
+  NEEDS_INFO
+  GENERIC
+}
+
+/// Geçmiş cevaplardan çıkarılan ürün alanı önerisinin durumu.
+enum SuggestionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
 }
 
 enum OrderChangeStatus {

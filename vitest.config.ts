@@ -35,6 +35,8 @@ export default defineConfig({
       SYNC_RETRY_BASE_MS: "0",
       TRENDYOL_TIMEOUT_MS: "2000",
       LOG_LEVEL: "error",
+      // Erişim kapısı artık her ortamda fail-closed; API testleri anahtarla çalışır.
+      APP_ACCESS_TOKEN: "test-access-token-1234567890",
     },
   },
 });

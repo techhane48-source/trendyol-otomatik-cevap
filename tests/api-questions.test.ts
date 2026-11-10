@@ -23,7 +23,8 @@ function questionsRequest(
 }
 
 beforeEach(() => {
-  delete process.env.APP_ACCESS_TOKEN;
+  // Erişim kapısı her ortamda fail-closed: testler geçerli anahtarla çalışır.
+  process.env.APP_ACCESS_TOKEN = "test-erisim-anahtari";
   setNodeEnv("test");
 });
 
@@ -53,6 +54,7 @@ describe("GET /api/questions — erişim kontrolü", () => {
   });
 
   it("üretimde anahtar yoksa 503 döner (fail-closed)", async () => {
+    delete process.env.APP_ACCESS_TOKEN;
     setNodeEnv("production");
 
     const response = await GET(questionsRequest());

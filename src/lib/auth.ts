@@ -10,9 +10,8 @@ import { timingSafeEqual } from "node:crypto";
  *
  * Davranış:
  * - `APP_ACCESS_TOKEN` tanımlıysa: Bearer başlığı veya `ty_access` çerezi eşleşmelidir.
- * - Tanımlı değil ve NODE_ENV !== "production": yerel geliştirme kolaylığı için açık.
- * - Tanımlı değil ve NODE_ENV === "production": **fail-closed** (503) — korumasız
- *   üretim dağıtımı mümkün olmaz.
+ * - Tanımlı değilse: **her ortamda fail-closed** (503). Geliştirme ortamında da açık
+ *   kapı YOKTUR; gerçek müşteri verilerine anahtarsız erişilemez.
  *
  * Anahtar değeri hiçbir log, hata mesajı veya yanıt gövdesinde yer almaz.
  */
@@ -20,7 +19,7 @@ import { timingSafeEqual } from "node:crypto";
 export const ACCESS_COOKIE_NAME = "ty_access";
 export const ACCESS_TOKEN_ENV = "APP_ACCESS_TOKEN";
 
-export type AccessMode = "enforced" | "open-dev" | "misconfigured";
+export type AccessMode = "enforced" | "misconfigured";
 
 export type AccessCheck =
   | { ok: true; mode: AccessMode }
@@ -33,7 +32,7 @@ export function getAccessToken(): string | null {
 
 export function getAccessMode(): AccessMode {
   if (getAccessToken()) return "enforced";
-  return process.env.NODE_ENV === "production" ? "misconfigured" : "open-dev";
+  return "misconfigured";
 }
 
 /** Sabit zamanlı karşılaştırma (zamanlama sızıntısını önler). */
@@ -54,8 +53,6 @@ export function extractBearerToken(headerValue: string | null | undefined): stri
 /** İstek sahibinin erişim hakkı var mı? */
 export function checkAccess(candidate: string | null | undefined): AccessCheck {
   const mode = getAccessMode();
-
-  if (mode === "open-dev") return { ok: true, mode };
 
   if (mode === "misconfigured") {
     return {

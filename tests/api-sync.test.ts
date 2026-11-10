@@ -27,6 +27,11 @@ function syncRequest(body?: string, headers: Record<string, string> = {}) {
   });
 }
 
+/** Yetkili istek: gövde doğrulama testleri geçerli anahtarla çalışır. */
+function authorizedRequest(body?: string, headers: Record<string, string> = {}) {
+  return syncRequest(body, { authorization: "Bearer test-erisim-anahtari", ...headers });
+}
+
 function partialResult(overrides: Record<string, unknown> = {}) {
   return {
     syncRunId: "run_1",
@@ -50,7 +55,8 @@ function partialResult(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  delete process.env.APP_ACCESS_TOKEN;
+  // Erişim kapısı her ortamda fail-closed: testler geçerli anahtarla çalışır.
+  process.env.APP_ACCESS_TOKEN = "test-erisim-anahtari";
   setNodeEnv("test");
   mockedSync.mockReset();
 });
@@ -61,7 +67,7 @@ afterEach(() => {
 
 describe("POST /api/sync — gövde doğrulaması", () => {
   it("geçersiz JSON gövdesini 400 ile reddeder (senkronizasyon başlatılmaz)", async () => {
-    const response = await POST(syncRequest('{"status": '));
+    const response = await POST(authorizedRequest('{"status": '));
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: "Geçersiz JSON gövdesi" });
@@ -69,14 +75,14 @@ describe("POST /api/sync — gövde doğrulaması", () => {
   });
 
   it("JSON dizi gövdesini 400 ile reddeder", async () => {
-    const response = await POST(syncRequest("[]"));
+    const response = await POST(authorizedRequest("[]"));
 
     expect(response.status).toBe(400);
     expect(mockedSync).not.toHaveBeenCalled();
   });
 
   it("desteklenmeyen status değeri 400 döner", async () => {
-    const response = await POST(syncRequest(JSON.stringify({ status: "BILINMEYEN" })));
+    const response = await POST(authorizedRequest(JSON.stringify({ status: "BILINMEYEN" })));
 
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string; issues?: string[] };
@@ -88,7 +94,7 @@ describe("POST /api/sync — gövde doğrulaması", () => {
   it("desteklenen status değeri kabul edilir", async () => {
     mockedSync.mockResolvedValue(partialResult({ status: "SUCCESS", complete: true }));
 
-    const response = await POST(syncRequest(JSON.stringify({ status: "ANSWERED" })));
+    const response = await POST(authorizedRequest(JSON.stringify({ status: "ANSWERED" })));
 
     expect(response.status).toBe(200);
     expect(mockedSync).toHaveBeenCalledWith(
@@ -97,20 +103,20 @@ describe("POST /api/sync — gövde doğrulaması", () => {
   });
 
   it("pageSize üst sınırı (200) korunur", async () => {
-    const response = await POST(syncRequest(JSON.stringify({ pageSize: 201 })));
+    const response = await POST(authorizedRequest(JSON.stringify({ pageSize: 201 })));
     expect(response.status).toBe(400);
     expect(mockedSync).not.toHaveBeenCalled();
   });
 
   it("maxPages üst sınırı (500) korunur", async () => {
-    const response = await POST(syncRequest(JSON.stringify({ maxPages: 501 })));
+    const response = await POST(authorizedRequest(JSON.stringify({ maxPages: 501 })));
     expect(response.status).toBe(400);
     expect(mockedSync).not.toHaveBeenCalled();
   });
 
   it("başlangıç tarihi bitişten sonraysa 400 döner", async () => {
     const response = await POST(
-      syncRequest(
+      authorizedRequest(
         JSON.stringify({ startDate: "2026-02-10T00:00:00Z", endDate: "2026-02-01T00:00:00Z" }),
       ),
     );
@@ -123,7 +129,7 @@ describe("POST /api/sync — gövde doğrulaması", () => {
 
   it("14 günden uzun tarih aralığı 400 döner", async () => {
     const response = await POST(
-      syncRequest(
+      authorizedRequest(
         JSON.stringify({ startDate: "2026-01-01T00:00:00Z", endDate: "2026-02-15T00:00:00Z" }),
       ),
     );
@@ -137,7 +143,7 @@ describe("POST /api/sync — gövde doğrulaması", () => {
   it("gövde olmadan çağrı varsayılanlarla çalışır", async () => {
     mockedSync.mockResolvedValue(partialResult({ status: "SUCCESS", complete: true }));
 
-    const response = await POST(syncRequest());
+    const response = await POST(authorizedRequest());
 
     expect(response.status).toBe(200);
     expect(mockedSync).toHaveBeenCalledWith({
@@ -148,7 +154,7 @@ describe("POST /api/sync — gövde doğrulaması", () => {
   it("statuses dizisi kabul edilir ve senkronizasyona iletilir", async () => {
     mockedSync.mockResolvedValue(partialResult({ status: "SUCCESS", complete: true }));
 
-    const response = await POST(syncRequest(JSON.stringify({ statuses: ["ANSWERED", "REJECTED"] })));
+    const response = await POST(authorizedRequest(JSON.stringify({ statuses: ["ANSWERED", "REJECTED"] })));
 
     expect(response.status).toBe(200);
     expect(mockedSync).toHaveBeenCalledWith(
@@ -158,7 +164,7 @@ describe("POST /api/sync — gövde doğrulaması", () => {
 
   it("statuses içinde geçersiz değer 400 döner", async () => {
     const response = await POST(
-      syncRequest(JSON.stringify({ statuses: ["ANSWERED", "UYDURMA"] })),
+      authorizedRequest(JSON.stringify({ statuses: ["ANSWERED", "UYDURMA"] })),
     );
 
     expect(response.status).toBe(400);
@@ -166,7 +172,7 @@ describe("POST /api/sync — gövde doğrulaması", () => {
   });
 
   it("statuses boş dizi 400 döner", async () => {
-    const response = await POST(syncRequest(JSON.stringify({ statuses: [] })));
+    const response = await POST(authorizedRequest(JSON.stringify({ statuses: [] })));
 
     expect(response.status).toBe(400);
     expect(mockedSync).not.toHaveBeenCalled();
@@ -177,7 +183,7 @@ describe("POST /api/sync — yanıt biçimi", () => {
   it("eksik senkronizasyonu complete=false ve PARTIAL olarak bildirir", async () => {
     mockedSync.mockResolvedValue(partialResult());
 
-    const response = await POST(syncRequest("{}"));
+    const response = await POST(authorizedRequest("{}"));
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
@@ -192,7 +198,7 @@ describe("POST /api/sync — yanıt biçimi", () => {
       partialResult({ status: "FAILED", complete: false, stopReason: "ERROR", errorCode: "401" }),
     );
 
-    const response = await POST(syncRequest("{}"));
+    const response = await POST(authorizedRequest("{}"));
     expect(response.status).toBe(502);
   });
 });
@@ -222,6 +228,7 @@ describe("POST /api/sync — erişim kontrolü", () => {
   });
 
   it("üretimde anahtar yoksa 503 döner (fail-closed)", async () => {
+    delete process.env.APP_ACCESS_TOKEN;
     setNodeEnv("production");
 
     const response = await POST(syncRequest("{}"));

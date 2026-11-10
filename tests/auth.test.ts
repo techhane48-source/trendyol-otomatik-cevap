@@ -40,8 +40,8 @@ describe("erişim kapısı — yapılandırma", () => {
 
   it("geliştirmede anahtar yoksa erişim açık", () => {
     setNodeEnv("development");
-    expect(getAccessMode()).toBe("open-dev");
-    expect(checkAccess(null)).toEqual({ ok: true, mode: "open-dev" });
+    expect(getAccessMode()).toBe("misconfigured");
+    expect(checkAccess(null)).toMatchObject({ ok: false, status: 503 });
   });
 
   it("üretimde anahtar yoksa fail-closed (503)", () => {
