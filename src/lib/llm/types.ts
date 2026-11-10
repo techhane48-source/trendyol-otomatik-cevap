@@ -21,6 +21,20 @@ export interface DraftContext {
   tone?: string | null;
   /** Sipariş/ölçü değişikliği bağlamı için ek talimat (varsa). */
   orderGuidance?: string | null;
+
+  /* ---- GÖREV 012: niyet odaklı cevap motoru ---- */
+  /** Algılanan birincil niyet (INTENT_LABELS anahtarı). */
+  intent?: string | null;
+  /** Niyet etiketi (Türkçe, panelde ve prompt'ta gösterilir). */
+  intentLabel?: string | null;
+  /** Cevap stratejisi: DIRECT | PARTIAL | ASK_DETAIL | HUMAN_REVIEW */
+  strategy?: string | null;
+  /** Doğrulanmış mağaza politikaları (yalnızca onaylanmışlar). */
+  policies?: Array<{ label: string; value: string }> | null;
+  /** Bu soru için gerçekten gerekli ama doğrulanmamış alan/politika etiketleri. */
+  missingForIntent?: string[] | null;
+  /** Canlı veri (fiyat/sipariş) gerektiren niyetlerde true. */
+  requiresHumanReview?: boolean;
   /**
    * Geçmiş soru-cevaplar (REFERANS). Doğrulanmış ürün bilgisi değildir; fiyat/stok/
    * teslimat/iade bilgisi güncel gerçek olarak kullanılamaz.

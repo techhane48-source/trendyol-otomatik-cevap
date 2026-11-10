@@ -79,7 +79,7 @@ describe("AI taslağı oluşturma", () => {
     expect(draft.status).toBe("PENDING");
     expect(draft.source).toBe("AI");
     expect(draft.model).toBe("mock-model");
-    expect(draft.promptVersion).toBe("v1");
+    expect(draft.promptVersion).toBe("v2-intent");
     expect(draft.createdBy).toBe("onaylayan-kisi");
 
     const events = await prisma.draftEvent.findMany({ where: { draftId: draft.id } });

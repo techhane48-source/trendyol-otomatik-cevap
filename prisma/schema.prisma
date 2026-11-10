@@ -25,6 +25,7 @@ model Store {
   productInfos ProductInfo[]
   fieldSuggestions ProductFieldSuggestion[]
   catalogProducts CatalogProduct[]
+  policies        StorePolicy[]
 
   @@map("stores")
 }
@@ -202,6 +203,32 @@ enum DraftAction {
   SUPERSEDED
 }
 
+/// Mağaza işletme politikası (GÖREV 012). Ürün bilgisinden AYRI katman.
+/// Politika metni yalnızca satıcı tarafından yazılır; doğrulanmadan AI'ya kesin bilgi olarak girmez.
+model StorePolicy {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// POLICY_DEFS anahtarı (customSize, sizeRanges, sewing, accessories, orderChange, price)
+  key   String
+  value String @db.Text
+
+  /// Satıcı onayı. false ise AI yalnızca "bilgi doğrulanmadı" diyebilir.
+  verified   Boolean   @default(false)
+  verifiedBy String?
+  verifiedAt DateTime?
+
+  /// MANUAL | IMPORT
+  source String @default("MANUAL")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, key])
+  @@map("store_policies")
+}
+
 /// Cevap taslağı. Her düzenleme YENİ bir revizyon oluşturur; eski revizyonlar silinmez.
 /// Bu tablo Trendyol'a hiçbir şey göndermez: onay yalnızca yerel durumu değiştirir.
 model AnswerDraft {
@@ -248,6 +275,14 @@ model AnswerDraft {
   historyUsed      Json?
   /// Doğrulanmış bilgiyle cevaplandı mı?
   resolution       DraftResolution?
+  /// GÖREV 012 — algılanan soru niyeti (CUSTOM_SIZE, PRICE, ORDER_STATUS, ...)
+  intent       String?
+  /// GÖREV 012 — cevap stratejisi: DIRECT | PARTIAL | ASK_DETAIL | HUMAN_REVIEW
+  strategy     String?
+  /// Canlı fiyat/sipariş verisi gerektiren niyetlerde insan incelemesi şart
+  requiresHumanReview Boolean @default(false)
+  /// Cevapta kullanılan doğrulanmış mağaza politikaları: [{ "label": ..., "value": ... }]
+  policiesUsed Json?
 
   createdBy  String?
   approvedBy String?

@@ -16,6 +16,17 @@ import { isUsableForDraft, matchProductInfo } from "@/lib/products/matching";
 import { findProductInfoForQuestion, type ProductAttribute } from "@/lib/products/service";
 import { FIELD_DEFS, verifiedAttributes } from "@/lib/products/bank";
 import { classifyQuestion, type QuestionCategory } from "@/lib/history/categories";
+import {
+  INTENT_FIELDS,
+  INTENT_LABELS,
+  INTENT_POLICIES,
+  PRODUCT_INTENTS,
+  decideStrategy,
+  detectIntents,
+  type AnswerStrategy,
+  type Intent,
+} from "@/lib/intents/taxonomy";
+import { getPolicyContext, policyLabelOf } from "@/lib/policies/service";
 
 /** Soru kategorisinin gerektirdiği doğrulanmış ürün alanları. */
 const CATEGORY_FIELDS: Partial<Record<QuestionCategory, Array<(typeof FIELD_DEFS)[number]["key"]>>> = {
@@ -126,6 +137,18 @@ export interface DraftView {
   usageEstimated: boolean;
   /** RESOLVED: doğrulanmış bilgiyle cevaplandı · GENERIC: bilgi yok · NEEDS_INFO: onaya kapalı */
   resolution: "RESOLVED" | "NEEDS_INFO" | "GENERIC";
+  /** GÖREV 012 — algılanan soru niyeti */
+  intent: Intent;
+  /** Niyet etiketi (Türkçe) */
+  intentLabel: string;
+  /** Cevap stratejisi */
+  strategy: AnswerStrategy;
+  /** Canlı fiyat/sipariş verisi gerektiriyor → insan incelemesi (otomatik onaya uygun değil) */
+  requiresHumanReview: boolean;
+  /** Cevapta kullanılan doğrulanmış mağaza politikaları */
+  policiesUsed: Array<{ key: string; label: string; value: string }>;
+  /** Bu soru için gerçekten gerekli ama doğrulanmamış alan/politika etiketleri */
+  missingForIntent: string[];
   /** Taslakta yararlanılan geçmiş cevaplar (soru kimliği + gerekçe) */
   historyUsed: Array<{
     questionId: string;
@@ -191,6 +214,10 @@ function toView(draft: {
   usageEstimated?: boolean | null;
   historyUsed?: unknown;
   resolution?: string | null;
+  intent?: string | null;
+  strategy?: string | null;
+  requiresHumanReview?: boolean | null;
+  policiesUsed?: unknown;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -216,6 +243,16 @@ function toView(draft: {
     usageEstimated: draft.usageEstimated ?? false,
     historyUsed: Array.isArray(draft.historyUsed) ? (draft.historyUsed as DraftView["historyUsed"]) : [],
     resolution: (draft.resolution as DraftView["resolution"]) ?? "GENERIC",
+    intent: ((draft.intent as Intent | null) ?? "OTHER") as Intent,
+    intentLabel: INTENT_LABELS[((draft.intent as Intent | null) ?? "OTHER") as Intent] ?? INTENT_LABELS.OTHER,
+    strategy: ((draft.strategy as AnswerStrategy | null) ?? "ASK_DETAIL") as AnswerStrategy,
+    requiresHumanReview: draft.requiresHumanReview ?? false,
+    policiesUsed: Array.isArray(draft.policiesUsed)
+      ? (draft.policiesUsed as Array<{ key: string; label: string; value: string }>)
+      : [],
+    missingForIntent: Array.isArray(draft.missingInfo)
+      ? (draft.missingInfo as string[]).filter((item) => item.startsWith("Eksik:"))
+      : [],
   };
 }
 
@@ -361,6 +398,56 @@ export async function createAiDraft(
     }
   }
 
+  // ---- GÖREV 012: niyet tespiti ve mağaza politikaları ----
+  const intentInfo = detectIntents(sanitized.text);
+  const intent = intentInfo.primary;
+  const intentLabel = INTENT_LABELS[intent];
+  const requiredFieldKeys = [...new Set(intentInfo.all.flatMap((item) => INTENT_FIELDS[item]))];
+  const requiredPolicyKeys = [...new Set(intentInfo.all.flatMap((item) => INTENT_POLICIES[item]))];
+
+  // Politika okunamazsa taslak üretimi durmaz; politika yokmuş gibi davranılır.
+  let verifiedPolicies: Array<{ key: string; label: string; value: string }> = [];
+  try {
+    const policyContext = await getPolicyContext({ storeId: question.storeId }, { prisma });
+    verifiedPolicies = policyContext.verified.map((policy) => ({
+      key: policy.key,
+      label: policy.label,
+      value: policy.value,
+    }));
+  } catch {
+    verifiedPolicies = [];
+  }
+
+  const relevantPolicies = verifiedPolicies.filter((policy) => requiredPolicyKeys.includes(policy.key));
+  const coveredFieldKeys = requiredFieldKeys.filter((key) => verifiedFieldKeys.has(key));
+  const coveredPolicyKeys = relevantPolicies.map((policy) => policy.key);
+
+  const strategy: AnswerStrategy = decideStrategy({
+    intent,
+    requiredFields: requiredFieldKeys,
+    coveredFields: coveredFieldKeys,
+    requiredPolicies: requiredPolicyKeys,
+    coveredPolicies: coveredPolicyKeys,
+  });
+
+  const missingForIntent = [
+    ...requiredFieldKeys
+      .filter((key) => !verifiedFieldKeys.has(key))
+      .map((key) => FIELD_DEFS.find((field) => field.key === key)?.label ?? key),
+    ...requiredPolicyKeys
+      .filter((key) => !coveredPolicyKeys.includes(key))
+      .map((key) => policyLabelOf(key)),
+  ];
+
+  const productQuestion = intentInfo.all.some((item) => PRODUCT_INTENTS.includes(item));
+  // Onaylanmış canlı sipariş durumu da geçerli bir kaynaktır.
+  const liveOrderSource = orderState.kind === "APPROVED";
+  const noRelevantSource = coveredFieldKeys.length === 0 && coveredPolicyKeys.length === 0 && !liveOrderSource;
+  const requiresHumanReview =
+    strategy === "HUMAN_REVIEW" ||
+    (!productQuestion && intent !== "OTHER" && noRelevantSource) ||
+    (intent === "PRICE" && noRelevantSource);
+
   const historyForPrompt = historyMatches.map((match) => ({
     ref: `#${match.trendyolQuestionId}`,
     question: maskPii(match.text),
@@ -378,6 +465,12 @@ export async function createAiDraft(
     tone: null,
     history: historyForPrompt.length > 0 ? historyForPrompt : null,
     orderGuidance: `${orderGuidance.instruction}${orderGuidance.suggestedPhrase ? ` Örnek cümle: "${orderGuidance.suggestedPhrase}"` : ""}`,
+    intent,
+    intentLabel,
+    strategy,
+    policies: relevantPolicies.map((policy) => ({ label: policy.label, value: policy.value })),
+    missingForIntent,
+    requiresHumanReview,
   });
 
   const llmStartedAt = Date.now();
@@ -437,47 +530,49 @@ export async function createAiDraft(
     missingInfo.push("Soru metninde talimat benzeri ifade tespit edildi; güvenilmeyen veri olarak işlendi.");
   }
 
-  // Soru kategorisi ve gereken doğrulanmış alanlar (çözüm sınıfı için).
-  const questionCategory = classifyQuestion(sanitized.text);
-  const requiredFields = CATEGORY_FIELDS[questionCategory] ?? [];
-  const coverage =
-    requiredFields.length > 0 ? requiredFields.filter((field) => verifiedFieldKeys.has(field)) : [...verifiedFieldKeys];
-  const productQuestion =
-    PRODUCT_CATEGORIES.includes(questionCategory) ||
-    (questionCategory === "ORDER" && ORDER_WITH_MEASURE.test(sanitized.text));
+  // ---- GÖREV 012: çözüm sınıfı ve insan incelemesi ----
 
-  // Doğrulanmış bilgi yokken KESİN VAAT (PROMISE) üretildiyse taslak onaya açılmaz:
-  // NEEDS_INFO, insan müdahalesi (düzenleme) gerektiğini açıkça gösterir. Sıradan
-  // ölçü/malzeme uyarıları mevcut "uyarıyı kabul et" akışıyla onaylanabilir kalır.
+  // Doğrulanmış bilgi yokken KESİN VAAT (PROMISE) üretildiyse taslak onaya açılmaz.
   const hasUnverifiedPromise =
     warnings.some((warning) => warning.kind === "PROMISE") ||
     (orderViolations.length > 0 && orderState.kind !== "APPROVED");
-  const needsInfo =
-    (hasUnverifiedPromise && usedFacts.length === 0) ||
-    historyUsage.blocksApproval ||
-    (productQuestion && coverage.length === 0);
-  const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
 
-  // Çözüm sınıfı:
-  // - RESOLVED: sorunun kategorisi için doğrulanmış alan var, cevap kaçamak değil, vaat yok.
-  // - NEEDS_INFO: ürün sorusu ama gerekli doğrulanmış alan yok → cevap üretilemiyor.
-  // - GENERIC: ürün dışı (sipariş/kargo/iade) veya kısmi bağlam.
+  // Fiyat iddiası: canlı fiyat verisi yok. "Zam geldi / fiyat arttı" gibi ifadeler
+  // yalnızca doğrulanmış fiyat politikası varsa ve buna dayanıyorsa kabul edilir.
+  const PRICE_CHANGE_CLAIM = /(zam\s*(geldi|yapıldı|var)|fiyat\w*\s*(arttı|yükseldi|değişti|güncellendi)|indirim\s*(yaptık|uyguladık))/i;
+  if (intent === "PRICE" && PRICE_CHANGE_CLAIM.test(text) && !coveredPolicyKeys.includes("price")) {
+    warnings.push({
+      kind: "PROMISE",
+      phrase: "Fiyat değişimi iddiası — doğrulanmış fiyat verisi yok.",
+    });
+  }
+
   const evasive = isEvasiveAnswer(text);
   const blockingWarnings = warnings.filter((warning) => warning.kind === "PROMISE" || warning.kind === "STALE");
 
-  const missingForQuestion = productQuestion && coverage.length === 0;
+  const needsInfo =
+    (hasUnverifiedPromise && usedFacts.length === 0 && coveredPolicyKeys.length === 0) ||
+    historyUsage.blocksApproval ||
+    (productQuestion && noRelevantSource);
+
+  const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
+
   const resolution: "RESOLVED" | "NEEDS_INFO" | "GENERIC" =
-    draftStatus === "NEEDS_INFO" || missingForQuestion
+    draftStatus === "NEEDS_INFO"
       ? "NEEDS_INFO"
-      : coverage.length > 0 && !evasive && blockingWarnings.length === 0
+      : (coveredFieldKeys.length > 0 || coveredPolicyKeys.length > 0) && !evasive && blockingWarnings.length === 0
         ? "RESOLVED"
         : "GENERIC";
 
-  if (productQuestion && coverage.length === 0) {
-    const labels = (requiredFields.length > 0 ? requiredFields : ["fabric"]).map(
-      (key) => FIELD_DEFS.find((field) => field.key === key)?.label ?? key,
+  if (missingForIntent.length > 0) {
+    missingInfo.push(`Eksik: ${missingForIntent.join(", ")}.`);
+  }
+  if (requiresHumanReview) {
+    missingInfo.push(
+      intent === "PRICE"
+        ? "Fiyat/kampanya karşılaştırması için insan incelemesi gerekir (canlı fiyat verisi yok)."
+        : "Bu soru için insan incelemesi gerekir.",
     );
-    missingInfo.push(`Bu soru için doğrulanmış bilgi yok: ${labels.join(", ")}.`);
   }
 
   const draft = await prisma.$transaction(async (tx) => {
@@ -524,6 +619,13 @@ export async function createAiDraft(
         estimatedCostUSD: costUSD,
         usageEstimated: completion.usage.estimated,
         resolution,
+        intent,
+        strategy,
+        requiresHumanReview,
+        policiesUsed:
+          relevantPolicies.length > 0
+            ? (relevantPolicies.map((policy) => ({ key: policy.key, label: policy.label, value: policy.value })) as unknown as object)
+            : undefined,
         historyUsed:
           historyMatches.length > 0
             ? (historyMatches.map((match) => ({

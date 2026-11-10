@@ -68,7 +68,7 @@ const envSchema = z.object({
   LLM_MAX_TOKENS: z.coerce.number().int().min(64).max(4_096).default(600),
   LLM_TEMPERATURE: z.coerce.number().min(0).max(1.5).default(0.2),
   /** Prompt sürümü: üretilen taslağın hangi kurallarla yazıldığını izlemek için. */
-  LLM_PROMPT_VERSION: z.string().trim().min(1).default("v1"),
+  LLM_PROMPT_VERSION: z.string().trim().min(1).default("v2-intent"),
   /** 429/5xx/ağ hatasında tekrar sayısı (0 = tekrar yok). */
   LLM_MAX_RETRIES: z.coerce.number().int().min(0).max(3).default(1),
   LLM_RETRY_BASE_MS: z.coerce.number().int().min(0).max(10_000).default(400),

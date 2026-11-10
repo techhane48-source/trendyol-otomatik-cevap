@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getDraftHistory, listQuestionsForDrafting, toDraftView, type DraftView } from "@/lib/drafts/service";
+import { STRATEGY_LABELS } from "@/lib/intents/taxonomy";
 import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
 
@@ -206,6 +207,25 @@ export default async function DraftsPage({
                       {latest.approvedBy ? ` · onaylayan: ${latest.approvedBy}` : ""}
                       {latest.approvedAt ? ` · ${formatDate(latest.approvedAt)}` : ""}
                     </div>
+
+                    <div style={{ fontSize: 12, marginBottom: 6 }}>
+                      <span className="badge">Niyet: {latest.intentLabel}</span>{" "}
+                      <span className="badge">{STRATEGY_LABELS[latest.strategy]}</span>{" "}
+                      {latest.requiresHumanReview ? <span className="badge waiting">İnsan incelemesi gerekli</span> : null}
+                    </div>
+
+                    {latest.policiesUsed.length > 0 ? (
+                      <div style={{ marginBottom: 8, fontSize: 13 }}>
+                        <strong>Kullanılan mağaza politikaları:</strong>
+                        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                          {latest.policiesUsed.map((policy) => (
+                            <li key={policy.key}>
+                              {policy.label}: {policy.value}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
 
                     <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
                       <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
