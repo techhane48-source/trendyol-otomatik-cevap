@@ -39,6 +39,9 @@ export function buildDraftMessages(context: DraftContext): LlmMessage {
 
   if (context.storeName?.trim()) lines.push(`- Mağaza: ${context.storeName.trim()}`);
   if (context.tone?.trim()) lines.push(`- Üslup notu: ${context.tone.trim()}`);
+  if (context.orderGuidance?.trim()) {
+    lines.push("", "SİPARİŞ / ÖLÇÜ DEĞİŞİKLİĞİ KURALLARI (bu kurallara kesinlikle uy):", context.orderGuidance.trim());
+  }
 
   if (!productInfo || productInfo.length === 0) {
     lines.push(

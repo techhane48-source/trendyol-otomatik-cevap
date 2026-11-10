@@ -31,6 +31,12 @@ const envSchema = z.object({
   SYNC_RETRY_BASE_MS: z.coerce.number().int().min(0).max(60_000).default(500),
 
   // HTTP
+  /** Sipariş (getShipmentPackages) servis kökü — salt okunur GET. */
+  ORDERS_BASE_URL: z
+    .string()
+    .trim()
+    .url()
+    .default("https://apigw.trendyol.com/integration/order"),
   TRENDYOL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
 
   /**

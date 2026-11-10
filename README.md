@@ -489,3 +489,78 @@ LLM_OUTPUT_COST_PER_1K=0.0012   # 1,20 USD / 1M çıktı
 ```
 
 Fiyat, geçidin `/v1/models` yanıtındaki `cost` alanından okunup 1K token'a çevrilir; sabit varsayım yapılmaz.
+
+## Sipariş durumuna göre ölçü değişikliği (GÖREV 007)
+
+Sipariş **salt okunur** aynalanır ve müşterinin ölçü değişikliği talebi yalnızca sipariş uygun durumdayken
+kaydedilir. Trendyol'a hiçbir sipariş güncellemesi veya müşteri cevabı gönderilmez.
+
+### Sipariş API'si
+
+| Değişken | Varsayılan | Açıklama |
+| --- | --- | --- |
+| `ORDERS_BASE_URL` | `https://apigw.trendyol.com/integration/order` | Sipariş servis kökü (`/sellers/{sellerId}/orders` eklenir) |
+
+`src/lib/trendyol/orders-client.ts` yalnızca `GET` kullanır: sayfalı liste ve `nextCursor` tabanlı akış
+(`/orders/stream`). Saklanan alanlar: sipariş numarası, paket kimliği, kalem kimliği, ürün kimlikleri, adet, durum.
+Adres, telefon, e-posta, kimlik ve ödeme bilgisi **kaydedilmez**; müşteri kimliği yalnızca tuzlanmış `sha256` özeti
+(`customerRef`) olarak tutulur.
+
+### Karar motoru
+
+| Sipariş durumu | Karar |
+| --- | --- |
+| `Created` | Talep alınabilir |
+| `Picking`, `Invoiced`, `Shipped`, `Delivered` | Talep reddedilir |
+| `Cancelled`, `Returned`, `Awaiting`, `UnPacked`, bilinmeyen | İnsan incelemesi |
+
+Karar tek başına yeterli değildir: talep **PENDING_REVIEW** olabilmesi için müşteri sahipliğinin API verisiyle
+doğrulanması, sipariş kaleminin tek anlamlı eşleşmesi ve en/boy yönünün metinden kesin çıkması gerekir.
+Bunlardan biri eksikse talep `NEEDS_VERIFICATION` olur. Sipariş numarası bilmek yetki kanıtı sayılmaz.
+
+### Veri modeli
+
+`Order` / `OrderLine` (ayna), `OrderChangeRequest` (talep) ve `OrderChangeEvent` (denetim kaydı).
+Durumlar: `PENDING_REVIEW`, `APPROVED`, `REJECTED`, `NEEDS_VERIFICATION`, `INVALIDATED`.
+Kısmi tekil indeks (`20261110020800_order_change_active_unique`), aynı soru + sipariş kalemi için ikinci **aktif**
+talebi veritabanı düzeyinde engeller; geçmiş kayıtlar korunur.
+
+### Onay akışı ve eşzamanlılık
+
+1. Onaydan önce sipariş durumu **canlı** yeniden sorgulanır.
+2. Durum hâlâ `Created` değilse onay yapılmaz, talep `INVALIDATED` olur (`ORDER_STATUS_CHANGED`).
+3. Durum koşullu güncelleme (`updateMany ... where status`) ile tek seferde değişir; çift tıklama/yarış
+   durumunda ikinci istek `ALREADY_APPROVED` alır.
+4. API'ye ulaşılamazsa ne talep oluşturulur ne onay verilir (`ORDERS_API_UNAVAILABLE`).
+5. `Created` olması ölçü değişikliğinin uygulandığı anlamına gelmez; onay yalnızca üretim personelinin kararıdır.
+
+### Paneller
+
+- `/orders` — sipariş numarasıyla arama, canlı Trendyol durumu, karar, kalemler, yerel ayna, talepler.
+- `/change-requests` — filtreli talep listesi, onay/ret, **üretim için onaylı ölçü değişiklikleri** listesi
+  (`?print=1` yazdırma görünümü), denetim izi.
+
+> **Yetki sınırı:** Paylaşılan yönetici anahtarı gerçek kullanıcı kimliği değildir; onaylayan aktör güvenilir
+> biçimde izlenemez. Çok kullanıcılı kullanımdan önce kullanıcı bazlı kimlik doğrulama gerekir.
+
+### AI kısıtları
+
+Talep durumuna göre izin verilen ifadeler değişir (`src/lib/orders/ai-guidance.ts`):
+
+| Durum | İzin verilen |
+| --- | --- |
+| Talep yok | Yalnızca "talebinizi değerlendireceğiz" |
+| `PENDING_REVIEW` | "Talebinizi aldık, üretim onayı bekleniyor" |
+| `APPROVED` | "Talebiniz onaylandı" |
+| Sipariş `Picking`+ | "İşleme alındığı için değişiklik yapılamıyor" |
+
+Onaylı kayıt yokken "onaylandı / uygulanacak / yapılamıyor" gibi kesin ifadeler uyarı üretir ve taslak
+`NEEDS_INFO` durumuna düşer; onaylanabilir sahte cevap kaydedilmez. AI kendi başına talep onaylayamaz.
+
+### Komutlar
+
+| Komut | Ne yapar |
+| --- | --- |
+| `npm run mock:orders` | Mock sipariş servisi (port 5597, `POST /_control` ile durum değiştirilebilir) |
+| `npx tsx scripts/e2e-orders.mts` | Gerçek PostgreSQL + mock servis E2E (oluştur/onayla/geçersiz kıl/kesinti) |
+| `npx tsx scripts/live-orders-check.mts` | Gerçek Trendyol'a **tek** salt okunur `GET`, PII yazdırmaz |

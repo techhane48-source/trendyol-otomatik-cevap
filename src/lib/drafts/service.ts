@@ -9,6 +9,7 @@ import { createLlmProvider } from "./../llm/provider";
 import { sanitizeQuestion } from "./../llm/sanitize";
 import { LlmNotConfiguredError, LlmRequestError, type LlmProvider } from "./../llm/types";
 import { computeCostUSD, resolvePricing } from "./../llm/usage";
+import { buildOrderGuidance, detectOrderClaimViolations, type OrderChangeState } from "@/lib/orders/ai-guidance";
 import { isUsableForDraft, matchProductInfo } from "@/lib/products/matching";
 import { findProductInfoForQuestion, type ProductAttribute } from "@/lib/products/service";
 
@@ -231,6 +232,27 @@ export async function createAiDraft(
   const productInfoText =
     usedFacts.length > 0 ? usedFacts.map((fact) => `${fact.label}: ${fact.value}`).join("\n") : null;
 
+  // Sipariş/ölçü değişikliği bağlamı: AI kendi başına onay iddiası üretemez.
+  const latestChange = await prisma.orderChangeRequest.findFirst({
+    where: { questionId: question.id },
+    orderBy: { createdAt: "desc" },
+    select: { status: true, orderNumber: true, matchNote: true },
+  });
+
+  const orderState: OrderChangeState = !latestChange
+    ? { kind: "NONE" }
+    : latestChange.status === "APPROVED"
+      ? { kind: "APPROVED", orderNumber: latestChange.orderNumber }
+      : latestChange.status === "PENDING_REVIEW"
+        ? { kind: "PENDING_REVIEW", orderNumber: latestChange.orderNumber, status: latestChange.status }
+        : latestChange.status === "NEEDS_VERIFICATION"
+          ? { kind: "NEEDS_VERIFICATION", reason: latestChange.matchNote }
+          : latestChange.status === "INVALIDATED"
+            ? { kind: "INVALIDATED", orderNumber: latestChange.orderNumber }
+            : { kind: "REJECTED", reason: latestChange.matchNote };
+
+  const orderGuidance = buildOrderGuidance(orderState);
+
   const sanitized = sanitizeQuestion(question.text);
 
   const messages = buildDraftMessages({
@@ -240,6 +262,7 @@ export async function createAiDraft(
     productInfo: productInfoText,
     storeName: null,
     tone: null,
+    orderGuidance: `${orderGuidance.instruction}${orderGuidance.suggestedPhrase ? ` Örnek cümle: "${orderGuidance.suggestedPhrase}"` : ""}`,
   });
 
   const llmStartedAt = Date.now();
@@ -275,6 +298,11 @@ export async function createAiDraft(
     [question.productName, question.productMainId, productInfoText].filter(Boolean).join(" "),
   );
 
+  const orderViolations = detectOrderClaimViolations(text, orderState);
+  for (const violation of orderViolations) {
+    if (!warnings.some((warning) => warning.phrase === violation.phrase)) warnings.push(violation);
+  }
+
   if (sanitized.injectionSuspected) {
     missingInfo.push("Soru metninde talimat benzeri ifade tespit edildi; güvenilmeyen veri olarak işlendi.");
   }
@@ -282,7 +310,9 @@ export async function createAiDraft(
   // Doğrulanmış bilgi yokken KESİN VAAT (PROMISE) üretildiyse taslak onaya açılmaz:
   // NEEDS_INFO, insan müdahalesi (düzenleme) gerektiğini açıkça gösterir. Sıradan
   // ölçü/malzeme uyarıları mevcut "uyarıyı kabul et" akışıyla onaylanabilir kalır.
-  const hasUnverifiedPromise = warnings.some((warning) => warning.kind === "PROMISE");
+  const hasUnverifiedPromise =
+    warnings.some((warning) => warning.kind === "PROMISE") ||
+    (orderViolations.length > 0 && orderState.kind !== "APPROVED");
   const needsInfo = hasUnverifiedPromise && usedFacts.length === 0;
   const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
 

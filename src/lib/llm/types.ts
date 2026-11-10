@@ -19,6 +19,8 @@ export interface DraftContext {
   storeName?: string | null;
   /** Mağazanın genel üslup notu (varsa). */
   tone?: string | null;
+  /** Sipariş/ölçü değişikliği bağlamı için ek talimat (varsa). */
+  orderGuidance?: string | null;
 }
 
 import type { LlmUsageInfo } from "./usage";

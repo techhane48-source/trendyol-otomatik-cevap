@@ -378,3 +378,122 @@ model QualityItem {
   @@index([runId])
   @@map("quality_items")
 }
+
+/// Trendyol sipariş paketi (salt okunur ayna). Adres/telefon/ödeme verisi SAKLANMAZ.
+model Order {
+  id               String   @id @default(cuid())
+  storeId          String
+  orderNumber      String
+  shipmentPackageId BigInt?
+  /// Paket durumu (Created, Picking, Invoiced, Shipped, Delivered, Cancelled, Returned, UnPacked, Awaiting)
+  status           String
+  rawStatus        String?
+  orderedAt        DateTime?
+  /// Müşteri kimliğinin tuzlanmış özeti (düz metin PII saklanmaz)
+  customerRef      String?
+  syncedAt         DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  lines  OrderLine[]
+  changeRequests OrderChangeRequest[]
+
+  @@unique([storeId, orderNumber])
+  @@index([storeId, status])
+  @@index([shipmentPackageId])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+/// Sipariş kalemi. Ürün eşleştirmesi için kimlikler tutulur.
+model OrderLine {
+  id            String  @id @default(cuid())
+  orderId       String
+  order         Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  lineId        String
+  productId     String?
+  productMainId String?
+  productName   String?
+  quantity      Int     @default(1)
+  status        String?
+
+  @@unique([orderId, lineId])
+  @@index([productMainId])
+  @@map("order_lines")
+}
+
+enum OrderChangeStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_VERIFICATION
+  INVALIDATED
+}
+
+enum OrderChangeAction {
+  CREATED
+  APPROVED
+  REJECTED
+  INVALIDATED
+  VERIFICATION_REQUIRED
+  NOTE
+}
+
+/// Ölçü değişikliği talebi. Onay yalnızca yerel kayıttır; Trendyol'a hiçbir yazma yapılmaz.
+model OrderChangeRequest {
+  id                 String            @id @default(cuid())
+  storeId            String
+  questionId         String?
+  orderId            String?
+  order              Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderNumber        String
+  shipmentPackageId  BigInt?
+  /// Trendyol sipariş kalemi kimliği (harici; ilişki zorunlu değil)
+  lineId             String?
+
+  originalWidthCm    Int?
+  originalHeightCm   Int?
+  requestedWidthCm   Int?
+  requestedHeightCm  Int?
+
+  /// En/boy yönü metinden kesin çıkarılamadıysa true
+  orientationUncertain Boolean        @default(false)
+
+  status             OrderChangeStatus @default(PENDING_REVIEW)
+  orderStatusAtRequest String?
+  orderStatusAtApproval String?
+  /// Müşteri sahipliği API verisiyle doğrulanabildi mi?
+  ownershipVerified  Boolean           @default(false)
+  matchNote          String?
+
+  createdBy          String?
+  approvedAt         DateTime?
+  approvedBy         String?
+  rejectedAt         DateTime?
+  rejectedBy         String?
+  reviewNote         String?
+
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  events OrderChangeEvent[]
+
+  @@index([storeId, status])
+  @@index([orderNumber])
+  @@index([questionId])
+  @@map("order_change_requests")
+}
+
+/// Talep denetim izi (audit).
+model OrderChangeEvent {
+  id        String            @id @default(cuid())
+  requestId String
+  request   OrderChangeRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  action    OrderChangeAction
+  actor     String
+  details   Json?
+  createdAt DateTime          @default(now())
+
+  @@index([requestId, createdAt])
+  @@map("order_change_events")
+}
