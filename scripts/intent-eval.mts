@@ -164,8 +164,13 @@ async function main() {
       ? +(scored.filter((row) => row.unnecessaryEscape).length / scored.length).toFixed(2)
       : 0,
     evasiveRate: scored.length ? +(scored.filter((row) => row.evasive).length / scored.length).toFixed(2) : 0,
-    resolved: scored.filter((row) => row.resolution === "RESOLVED").length,
+    answered: scored.filter((row) => row.resolution === "ANSWERED").length,
+    partial: scored.filter((row) => row.resolution === "PARTIAL").length,
     needsInfo: scored.filter((row) => row.resolution === "NEEDS_INFO").length,
+    humanReview: scored.filter((row) => row.resolution === "HUMAN_REVIEW").length,
+    // Eski ölçümle kıyaslanabilirlik: RESOLVED ≈ ANSWERED + PARTIAL
+    resolvedPartial: scored.filter((row) => row.resolution === "ANSWERED" || row.resolution === "PARTIAL").length,
+    legacyResolved: scored.filter((row) => row.resolution === "RESOLVED").length,
     generic: scored.filter((row) => row.resolution === "GENERIC").length,
   };
 

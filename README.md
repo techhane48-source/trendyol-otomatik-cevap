@@ -998,3 +998,69 @@ kumaş/pile/karartma bilgisi devreye girmiyor; düşüş ölçüm gürültüsü 
 yansıması **%14 → %57**, ilgili alanın "eksik" sayılması **%100 → %29**.
 Örnek: "dikimi sık pile mi" → önce "sık pile oranı hakkında doğrulanmış bilgi yok"; sonra
 "Ürün pilesiz (1 x 1) düz dikimdir; sık pileli değildir."
+
+## GÖREV 015 — Türkçe ölçü anlama ve gerçek çözüm kalitesi
+
+**Branch:** `task-015-olcu-ve-cozum-kalitesi` (başlangıç `d82a32d`)
+
+### 1. Türkçe ölçü ayrıştırma (`src/lib/products/sizes.ts`)
+
+`parseSizeRequest(text)` tek noktadan ölçü çıkarır; birim cm'e normalize edilir.
+
+| Biçim | Örnek | Sonuç |
+|---|---|---|
+| `x` / `×` | `260 x 220` | EN 260 · BOY 220 |
+| tire / slash | `150-260`, `130/180` | EN 150 · BOY 260 |
+| ye / 'ye | `250 ye 180`, `250'ye 180` | EN 250 · BOY 180 |
+| metre (rakam) | `2 metreye 2 metre` | 200 × 200 |
+| metre (Türkçe sayı) | `2 metreye iki metre`, `iki metreye iki metre` | 200 × 200 |
+| buçuk | `iki buçuk metre`, `ikibucuk metre` | tek eksen 250 → netleştirme |
+| en/boy etiketli | `220 en 160 boy`, `eni 180 boyu 100` | EN/BOY eşlenir |
+| sipariş sonrası | `250 ye 200 aldım ama 195 olsun boyu` | EN 250 sabit, BOY 195 |
+| çoklu ölçü | `150-260 ... 135-260 ... 170-270` | `MULTI_SIZE` → hangisi sorulur |
+
+Kurallar:
+- Tek ölçü verilmişse ikinci ölçü **uydurulmaz** (`SECOND_DIMENSION_MISSING`).
+- Hangi eksenin değiştiği belirsizse `AXIS_UNKNOWN`; strateji `ASK_DETAIL`'e yükselir ve prompt "ÖLÇÜ BELİRSİZ" talimatı alır.
+- Sipariş numarası (≥9 hane), tarih (1990–2100), fiyat (TL/₺/lira) ölçü sayılmaz.
+- Katalogda olmayan ölçü için "mevcut" denmez; yalnızca daha büyük varyanttan küçültme **talebi** değerlendirilebilir.
+
+### 2. Cevap kalitesi (`src/lib/drafts/resolution.ts`)
+
+Eski kural ("doğrulanmış politika kullanıldıysa RESOLVED") kaldırıldı. Yeni durumlar `DraftResolution` enum'una eklendi (migration `20261111150000_draft_resolution_quality`):
+
+| Durum | Anlam |
+|---|---|
+| `ANSWERED` | Soru doğrulanmış bilgiyle gerçekten cevaplandı |
+| `PARTIAL` | Bir kısım cevaplandı / koşullu cevap / tekrar bilgi isteme |
+| `NEEDS_INFO` | Gerekli bilgi eksik |
+| `HUMAN_REVIEW` | Canlı veri, iade, üretim taahhüdü → insan |
+
+Kurallar: "doğrulanmış bilgimiz yok" → `NEEDS_INFO`; durum sorusuna yalnızca politika anlatımı → `HUMAN_REVIEW`; kaçamak cevap → `PARTIAL`; engelleyici uyarı (PROMISE/STALE) → `HUMAN_REVIEW`. `RESOLVED`/`GENERIC` eski kayıtlar için korunur; kıyas `ANSWERED + PARTIAL` ile yapılır.
+
+### 3. Müşteri bilgisini tekrar istememe
+
+- Soruda sipariş numarası varsa prompt'a "SİPARİŞ NUMARASI VERİLDİ — tekrar isteme, cevaba yazma" satırı eklenir; numara maskelenmiş metinde tutulur, ham hâli loglanmaz.
+- "kayıt yok / talep görünmüyor" iddiası prompt'ta yasaklandı.
+- `unnecessaryAsk` metriği: verilen sipariş no/ölçü tekrar istenirse `PARTIAL`.
+- **Uydurma ölçü koruması:** cevapta geçen her `WxH` etiketi soru, katalog veya rehberde yoksa `HUMAN_REVIEW` (gerekçe: "kaynakta olmayan ölçü").
+
+### 4. Niyet düzeltmeleri
+
+- `SHIPPING` artık `ORDER_STATUS`'tan önce değerlendirilir ("kargoya verilir mi" → SHIPPING).
+- İade/ücret iadesi geçen sorular birincil `ORDER_STATUS`.
+- Tamir/yırtılma anlatısındaki "fiyat" kelimesi `PRICE` niyeti üretmez (açık fiyat sorusu hariç).
+
+### 5. Ölçüm (aynı 30 gerçek soru)
+
+| Metrik | GÖREV 014 sonrası | GÖREV 015 |
+|---|---|---|
+| ANSWERED | 0 (eski RESOLVED 21, 2'si içi boş) | 14 |
+| PARTIAL | — | 2 |
+| NEEDS_INFO | 4 | 10 |
+| HUMAN_REVIEW | 8 | 4 |
+| Somut cevap oranı | %53 | %63 |
+| Yanlış bilgi | %0 | %0 |
+| Niyet doğruluğu | %97 | %97 |
+
+Test: **400 test / 23 dosya**, typecheck 0, build 0.

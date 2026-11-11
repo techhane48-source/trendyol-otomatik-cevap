@@ -23,6 +23,8 @@ export interface DraftContext {
   orderGuidance?: string | null;
   /** Katalogdan gelen varyant ölçü analizi (doğrulanmış veri). */
   sizeGuidance?: string | null;
+  /** Müşteri sipariş numarasını soruda verdiyse true: tekrar istenmez. */
+  orderNumberProvided?: boolean;
 
   /* ---- GÖREV 012: niyet odaklı cevap motoru ---- */
   /** Algılanan birincil niyet (INTENT_LABELS anahtarı). */

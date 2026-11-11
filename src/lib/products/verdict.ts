@@ -71,7 +71,7 @@ export function isFieldValueValid(fieldKey: FieldKey, value: string): boolean {
     case "mounting":
       return /montaj|kanca|pim|rulo|kornis|bant|asma|asil/.test(folded);
     case "customSize":
-      return /olcu|cm|en|boy|[x×]|\d{2,}/.test(folded);
+      return /olcu|cm|\ben\b|\bboy\b|[x×]|\d{2,}/.test(folded);
     case "sewing":
       return /dikim|dikis|pile|buzg|ekstrafor|duz/.test(folded);
     case "colors":

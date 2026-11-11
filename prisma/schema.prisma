@@ -510,8 +510,16 @@ enum AnswerReviewStatus {
 
 /// Taslak çözüm sınıfı: doğrulanmış bilgiyle mi cevaplandı?
 enum DraftResolution {
-  RESOLVED
+  /// GÖREV 015: gerçekten cevaplandı (somut/doğrulanmış bilgi verildi)
+  ANSWERED
+  /// Kısmen cevaplandı: bir kısım bilgi verildi, kalanı eksik
+  PARTIAL
+  /// Gerekli bilgi eksik
   NEEDS_INFO
+  /// İnsan kararı / gerçek işlem gerekiyor
+  HUMAN_REVIEW
+  /// Eski kayıtlar (geriye dönük uyumluluk)
+  RESOLVED
   GENERIC
 }
 

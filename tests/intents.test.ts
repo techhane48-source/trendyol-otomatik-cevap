@@ -254,7 +254,7 @@ describe("niyet odaklı taslak", () => {
     const draft = await createAiDraft({ questionId, actor }, { prisma, provider });
 
     expect(draft.intent).toBe("CUSTOM_SIZE");
-    expect(draft.resolution).toBe("RESOLVED");
+    expect(draft.resolution).toBe("ANSWERED");
     expect(draft.requiresHumanReview).toBe(false);
   });
 

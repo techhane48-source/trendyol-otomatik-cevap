@@ -289,7 +289,7 @@ describe("hafıza kalitesi", () => {
 });
 
 describe("taslak: doğrulanmış alan ve çözüm sınıfı", () => {
-  it("yalnızca doğrulanmış alanı kullanır, RESOLVED işaretler", async () => {
+  it("yalnızca doğrulanmış alanı kullanır, ANSWERED işaretler", async () => {
     const storeId = await seedStore();
     const questionId = await seedQuestion({ storeId, text: "Kumaş türü nedir?" });
 
@@ -304,7 +304,7 @@ describe("taslak: doğrulanmış alan ve çözüm sınıfı", () => {
 
     expect(draft.usedFacts.map((fact) => fact.value)).toEqual(["Bambu dokulu tül"]);
     expect(draft.usedFacts.every((fact) => fact.source === "VERIFIED_CARD")).toBe(true);
-    expect(draft.resolution).toBe("RESOLVED");
+    expect(draft.resolution).toBe("ANSWERED");
     expect(draft.missingInfo.some((item) => item.includes("Pile oranı"))).toBe(true);
     expect(draft.status).toBe("PENDING");
   });
@@ -360,7 +360,7 @@ describe("değer semantiği — yanlış çelişki düzeltmesi", () => {
 });
 
 describe("kaçamak cevap RESOLVED sayılmaz", () => {
-  it("doğrulanmış alan olsa da 'kontrol edip ileteceğim' cevabı GENERIC kalır", async () => {
+  it("doğrulanmış alan olsa da 'kontrol edip ileteceğim' cevabı ANSWERED sayılmaz", async () => {
     const storeId = await seedStore();
     const questionId = await seedQuestion({ storeId, text: "Kumaş türü nedir?", productId: "VAR-1" });
     await prisma.productInfo.create({
@@ -375,7 +375,7 @@ describe("kaçamak cevap RESOLVED sayılmaz", () => {
     );
 
     expect(draft.usedFacts.length).toBeGreaterThan(0);
-    expect(draft.resolution).toBe("GENERIC");
-    expect(draft.resolution).not.toBe("RESOLVED");
+    expect(draft.resolution).toBe("PARTIAL");
+    expect(draft.resolution).not.toBe("ANSWERED");
   });
 });

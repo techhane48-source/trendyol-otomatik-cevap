@@ -70,6 +70,13 @@ const RULES: IntentRule[] = [
     ),
   },
   {
+    intent: "SHIPPING",
+    pattern: word(
+      "kargo[a-zçğıöşü]*|teslimat[a-zçğıöşü]*|teslim[a-zçğıöşü]*|ka[çc]\s*g[üu]nde" +
+        "|g[üu]n\s*i[çc]inde|g[öo]nderim[a-zçğıöşü]*|paket[a-zçğıöşü]*",
+    ),
+  },
+  {
     intent: "ORDER_STATUS",
     pattern: word(
       "sipari[şs][a-zçğıöşü]*(\\s*numara[a-zçğıöşü]*)?|numara[a-zçğıöşü]*\\s*sipari[şs][a-zçğıöşü]*" +
@@ -77,13 +84,7 @@ const RULES: IntentRule[] = [
         "|teslim\\s*edil[a-zçğıöşü]*|iade[a-zçğıöşü]*|para[a-zçğıöşü]*\\s*geri|geri\\s*[öo]deme[a-zçğıöşü]*|gelmedi",
     ),
   },
-  {
-    intent: "SHIPPING",
-    pattern: word(
-      "kargo[a-zçğıöşü]*|teslimat[a-zçğıöşü]*|teslim[a-zçğıöşü]*|ka[çc]\\s*g[üu]nde" +
-        "|g[üu]n\\s*i[çc]inde|g[öo]nderim[a-zçğıöşü]*|paket[a-zçğıöşü]*",
-    ),
-  },
+  
   {
     intent: "CUSTOM_SIZE",
     pattern: word(
@@ -144,6 +145,26 @@ export function detectIntents(text: string): { primary: Intent; all: Intent[] } 
   if (!hasLongOrderNumber && found.includes("CUSTOM_SIZE") && found[0] === "ORDER_STATUS") {
     found.splice(found.indexOf("CUSTOM_SIZE"), 1);
     found.unshift("CUSTOM_SIZE");
+  }
+
+  // Destek/tamir anlatısı içinde geçen "fiyat" kelimesi niyeti fiyata çekmesin.
+  const supportNarrative = /y[ıi]rt[ıi]l|tamir|dikil|yeniden yap|perdeci|de[ğg]i[şs]tirmek istiyorum/i.test(text);
+  const explicitPriceQuestion = /ne kadar|fiyat[ıi] ne|fiyat[ıi]n[ıi]z|ka[çc]\s*(?:tl|lira)|zam m[ıi] geldi|indirim var m[ıi]/i.test(text);
+  if (supportNarrative && !explicitPriceQuestion) {
+    const priceIndex = found.indexOf("PRICE");
+    if (priceIndex >= 0) found.splice(priceIndex, 1);
+  }
+
+  // İade / ücret iadesi varsa birincil niyet sipariş durumudur.
+  const refund = /iade|para(?:y[ıi])?\s*geri|geri\s*[öo]deme|[üu]cret iadesi/i.test(text);
+  if (refund) {
+    const statusIndex = found.indexOf("ORDER_STATUS");
+    if (statusIndex > 0) {
+      found.splice(statusIndex, 1);
+      found.unshift("ORDER_STATUS");
+    } else if (statusIndex < 0) {
+      found.unshift("ORDER_STATUS");
+    }
   }
 
   const primary = found[0] ?? "OTHER";

@@ -74,9 +74,33 @@ export function buildDraftMessages(context: DraftContext): LlmMessage {
     );
   }
 
+  if (context.sizeGuidance && /ÖLÇÜ BELİRSİZ|belirsiz/i.test(context.sizeGuidance)) {
+    lines.push(
+      "",
+      "ÖLÇÜ BELİRSİZ: Hangi ölçünün (EN mi BOY mu) kastedildiği net değilse YÖN VARSAYMA.",
+      "EN/BOY eşleştirmesi uydurma; tek eksik bilgiyi sor.",
+    );
+  }
+
+  if (context.orderNumberProvided) {
+    lines.push(
+      "",
+      "SİPARİŞ NUMARASI VERİLDİ: Müşteri sipariş numarasını soruda paylaştı. Numarayı TEKRAR İSTEME, cevabında numarayı yazma.",
+    );
+  }
+
   if (context.strategy) {
     lines.push("", `CEVAP STRATEJİSİ: ${context.strategy}`, STRATEGY_RULES[context.strategy] ?? "");
   }
+
+  lines.push(
+    "",
+    "ÖLÇÜ HESABI YASAK: Katalogda veya müşteri mesajında geçmeyen bir ölçüyü hesaplayıp önerme.",
+    "Yalnızca müşterinin yazdığı ölçüyü ve katalogdaki ölçü etiketlerini kullan; ara ölçü uydurma.",
+    "",
+    "KAYIT İDDİASI YASAK: \"kayıt yok / talep görünmüyor / tespit edilmedi\" gibi sistemde olmayan bir kaydı yok sayma iddiası kurma.",
+    "Yalnızca bu sohbette paylaşılan bilgiyi ve yukarıdaki doğrulanmış kaynakları kullan.",
+  );
 
   if (policyLines.length > 0) {
     lines.push("", "MAĞAZA POLİTİKALARI (satıcı tarafından doğrulanmış):");

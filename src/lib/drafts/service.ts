@@ -28,7 +28,8 @@ import {
 } from "@/lib/intents/taxonomy";
 import { getPolicyContext, policyLabelOf } from "@/lib/policies/service";
 import { getAutoFactsForQuestion, usableAutoFacts, type AutoFact } from "@/lib/products/auto-facts";
-import { analyzeRequestedSize, describeSizeAnalysis, extractRequestedSize, getVariantSizesForQuestion } from "@/lib/products/sizes";
+import { analyzeRequestedSize, describeSizeAmbiguity, describeSizeAnalysis, getVariantSizesForQuestion, parseSizeRequest, sizeLabelsIn } from "@/lib/products/sizes";
+import { evaluateAnswerQuality } from "@/lib/drafts/resolution";
 
 /** Soru kategorisinin gerektirdiği doğrulanmış ürün alanları. */
 const CATEGORY_FIELDS: Partial<Record<QuestionCategory, Array<(typeof FIELD_DEFS)[number]["key"]>>> = {
@@ -138,7 +139,8 @@ export interface DraftView {
   estimatedCostUSD: number | null;
   usageEstimated: boolean;
   /** RESOLVED: doğrulanmış bilgiyle cevaplandı · GENERIC: bilgi yok · NEEDS_INFO: onaya kapalı */
-  resolution: "RESOLVED" | "NEEDS_INFO" | "GENERIC";
+  /** GÖREV 015: ANSWERED | PARTIAL | NEEDS_INFO | HUMAN_REVIEW (eski kayıtlarda RESOLVED/GENERIC) */
+  resolution: "ANSWERED" | "PARTIAL" | "NEEDS_INFO" | "HUMAN_REVIEW" | "RESOLVED" | "GENERIC";
   /** GÖREV 012 — algılanan soru niyeti */
   intent: Intent;
   /** Niyet etiketi (Türkçe) */
@@ -465,18 +467,34 @@ export async function createAiDraft(
       .map((key) => policyLabelOf(key)),
   ];
 
-  // ---- GÖREV 013: katalogdaki gerçek varyant ölçüleriyle karşılaştırma ----
+  // ---- GÖREV 013/015: Türkçe ölçü anlama + katalogdaki gerçek varyantlarla karşılaştırma ----
   let sizeGuidance: string | null = null;
   let sizeExactMatch = false;
+  let providedSize = false;
+  // Ürünün gerçek katalog ölçüleri: cevapta geçen ölçülerin kaynağı sayılır.
+  let catalogSizeLabels: string[] = [];
+  if (question.productMainId) {
+    try {
+      const catalogSizes = await getVariantSizesForQuestion(
+        { storeId: question.storeId, productMainId: question.productMainId },
+        { prisma },
+      );
+      catalogSizeLabels = catalogSizes.map((size) => `${size.width}x${size.height}`);
+    } catch {
+      catalogSizeLabels = [];
+    }
+  }
   if (intentInfo.all.includes("CUSTOM_SIZE") || intentInfo.all.includes("ORDER_CHANGE")) {
-    const requested = extractRequestedSize(sanitized.text);
-    if (requested) {
+    const sizeRequest = parseSizeRequest(sanitized.text);
+    providedSize = Boolean(sizeRequest.requested || sizeRequest.single || sizeRequest.current);
+
+    if (sizeRequest.requested) {
       try {
         const sizes = await getVariantSizesForQuestion(
           { storeId: question.storeId, productMainId: question.productMainId },
           { prisma },
         );
-        const analysis = analyzeRequestedSize(sizes, requested);
+        const analysis = analyzeRequestedSize(sizes, sizeRequest.requested);
         sizeExactMatch = analysis.exact !== null;
         sizeGuidance = describeSizeAnalysis(analysis);
       } catch {
@@ -484,6 +502,9 @@ export async function createAiDraft(
         sizeGuidance = null;
       }
     }
+
+    const ambiguity = describeSizeAmbiguity(sizeRequest);
+    if (ambiguity) sizeGuidance = [sizeGuidance, ambiguity].filter(Boolean).join("\n");
   }
 
   // Katalogda birebir aynı varyant varsa bu doğrulanmış bilgidir: doğrudan cevap verilebilir.
@@ -521,6 +542,7 @@ export async function createAiDraft(
     intentLabel,
     strategy,
     sizeGuidance,
+    orderNumberProvided: /\d{9,12}/.test(question.text ?? ""),
     policies: relevantPolicies.map((policy) => ({ label: policy.label, value: policy.value })),
     missingForIntent,
     requiresHumanReview,
@@ -610,12 +632,31 @@ export async function createAiDraft(
 
   const draftStatus = needsInfo ? "NEEDS_INFO" : "PENDING";
 
-  const resolution: "RESOLVED" | "NEEDS_INFO" | "GENERIC" =
-    draftStatus === "NEEDS_INFO"
-      ? "NEEDS_INFO"
-      : (coveredFieldKeys.length > 0 || coveredPolicyKeys.length > 0) && !evasive && blockingWarnings.length === 0
-        ? "RESOLVED"
-        : "GENERIC";
+  // GÖREV 015: "politika kullanıldı" tek başına çözüm sayılmaz. Cevabın içeriği değerlendirilir.
+  const quality = evaluateAnswerQuality({
+    question: sanitized.text,
+    answer: text,
+    intent,
+    requiresHumanReview,
+    coveredFields: coveredFieldKeys.length,
+    coveredPolicies: coveredPolicyKeys.length,
+    blockingWarnings: blockingWarnings.length,
+    liveOrderVerified: liveOrderSource,
+    providedOrderNumber: /\d{9,12}/.test(question.text ?? ""),
+    providedSize,
+    factValues: usedFacts.map((fact) => fact.value),
+    evasive,
+    fabricatedSizes: sizeLabelsIn(text).filter(
+      (label) =>
+        !sizeLabelsIn(sanitized.text).includes(label) &&
+        !catalogSizeLabels.includes(label) &&
+        !sizeLabelsIn(sizeGuidance ?? "").includes(label) &&
+        !usedFacts.some((fact) => fact.value.replace(/\s/g, "").includes(label)),
+    ),
+  });
+  // Onaya kapalı taslak (NEEDS_INFO) çözülmüş sayılmaz; insan incelemesi ayrı kalır.
+  const resolution: DraftView["resolution"] =
+    draftStatus === "NEEDS_INFO" && quality.quality !== "HUMAN_REVIEW" ? "NEEDS_INFO" : quality.quality;
 
   if (missingForIntent.length > 0) {
     missingInfo.push(`Eksik: ${missingForIntent.join(", ")}.`);
