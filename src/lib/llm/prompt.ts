@@ -96,6 +96,20 @@ export function buildDraftMessages(context: DraftContext): LlmMessage {
     lines.push("", "SİPARİŞ / ÖLÇÜ DEĞİŞİKLİĞİ KURALLARI (bu kurallara kesinlikle uy):", context.orderGuidance.trim());
   }
 
+  if (context.sizeGuidance?.trim()) {
+    lines.push(
+      "",
+      "VARYANT ÖLÇÜ ANALİZİ (Trendyol kataloğundan, doğrulanmış):",
+      context.sizeGuidance.trim(),
+      "ÖLÇÜ KURALLARI:",
+      "- Ölçü ile dikim/aksesuar isteğini AYRI değerlendir; birinin cevabı diğerini kapsamaz.",
+      "- Katalogda olmayan ölçü için 'yapılabilir/yapıyoruz' deme; küçültme talebinin değerlendirilebileceğini söyle.",
+      "- Küçültme için kesin onay, süre veya garanti sözü verme; üretim ekibi onayı gerektiğini belirt.",
+      "- Satın alınan ölçüden daha büyük üretim (büyütme) VAAT ETME.",
+      "- Katalog verisi yoksa ölçünün mevcut olduğunu ima etme, yalnızca net ölçü ve sipariş numarası iste.",
+    );
+  }
+
   if (context.history && context.history.length > 0) {
     lines.push("", "GEÇMİŞ CEVAPLAR (yalnızca REFERANS — doğrulanmış gerçek DEĞİLDİR):");
     for (const item of context.history) {

@@ -27,6 +27,7 @@ import {
   type Intent,
 } from "@/lib/intents/taxonomy";
 import { getPolicyContext, policyLabelOf } from "@/lib/policies/service";
+import { analyzeRequestedSize, describeSizeAnalysis, extractRequestedSize, getVariantSizesForQuestion } from "@/lib/products/sizes";
 
 /** Soru kategorisinin gerektirdiği doğrulanmış ürün alanları. */
 const CATEGORY_FIELDS: Partial<Record<QuestionCategory, Array<(typeof FIELD_DEFS)[number]["key"]>>> = {
@@ -422,7 +423,7 @@ export async function createAiDraft(
   const coveredFieldKeys = requiredFieldKeys.filter((key) => verifiedFieldKeys.has(key));
   const coveredPolicyKeys = relevantPolicies.map((policy) => policy.key);
 
-  const strategy: AnswerStrategy = decideStrategy({
+  let strategy: AnswerStrategy = decideStrategy({
     intent,
     requiredFields: requiredFieldKeys,
     coveredFields: coveredFieldKeys,
@@ -438,6 +439,32 @@ export async function createAiDraft(
       .filter((key) => !coveredPolicyKeys.includes(key))
       .map((key) => policyLabelOf(key)),
   ];
+
+  // ---- GÖREV 013: katalogdaki gerçek varyant ölçüleriyle karşılaştırma ----
+  let sizeGuidance: string | null = null;
+  let sizeExactMatch = false;
+  if (intentInfo.all.includes("CUSTOM_SIZE") || intentInfo.all.includes("ORDER_CHANGE")) {
+    const requested = extractRequestedSize(sanitized.text);
+    if (requested) {
+      try {
+        const sizes = await getVariantSizesForQuestion(
+          { storeId: question.storeId, productMainId: question.productMainId },
+          { prisma },
+        );
+        const analysis = analyzeRequestedSize(sizes, requested);
+        sizeExactMatch = analysis.exact !== null;
+        sizeGuidance = describeSizeAnalysis(analysis);
+      } catch {
+        // Katalog okunamazsa ölçü iddiası üretilmez; taslak yine oluşturulur.
+        sizeGuidance = null;
+      }
+    }
+  }
+
+  // Katalogda birebir aynı varyant varsa bu doğrulanmış bilgidir: doğrudan cevap verilebilir.
+  if (sizeExactMatch && intent === "CUSTOM_SIZE" && strategy !== "DIRECT") {
+    strategy = "DIRECT";
+  }
 
   const productQuestion = intentInfo.all.some((item) => PRODUCT_INTENTS.includes(item));
   // Onaylanmış canlı sipariş durumu da geçerli bir kaynaktır.
@@ -468,6 +495,7 @@ export async function createAiDraft(
     intent,
     intentLabel,
     strategy,
+    sizeGuidance,
     policies: relevantPolicies.map((policy) => ({ label: policy.label, value: policy.value })),
     missingForIntent,
     requiresHumanReview,

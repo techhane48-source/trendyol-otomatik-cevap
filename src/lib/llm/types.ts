@@ -21,6 +21,8 @@ export interface DraftContext {
   tone?: string | null;
   /** Sipariş/ölçü değişikliği bağlamı için ek talimat (varsa). */
   orderGuidance?: string | null;
+  /** Katalogdan gelen varyant ölçü analizi (doğrulanmış veri). */
+  sizeGuidance?: string | null;
 
   /* ---- GÖREV 012: niyet odaklı cevap motoru ---- */
   /** Algılanan birincil niyet (INTENT_LABELS anahtarı). */

@@ -908,3 +908,51 @@ satıcının bilgileri doğrulaması gerekir.
 `tests/intents.test.ts` — 17 test: üç gerçek sorunun regresyonu, çok niyetli sınıflandırma, strateji kararları,
 politika kaydet/doğrula/metin değişince doğrulamanın düşmesi, doğrulanmamış politikanın prompt'a girmemesi,
 doğrulanmış politikanın kaynak olarak kullanılması. Toplam **339 test**.
+
+## GÖREV 013 — Aura Perde mağaza politikaları ve varyant ölçü analizi
+
+### Politika eşleştirmesi (7 kural → 7 alan)
+| # | Kural | `key` | Panel etiketi |
+| --- | --- | --- | --- |
+| 1 | Özel ölçü ve kesim (küçültme istisnası) | `customSize` | Özel ölçü kabulü |
+| 2 | Dikim ve pile | `sewing` | Dikim seçenekleri |
+| 3 | Aksesuar ve ürün içeriği | `accessories` | Aksesuar seçenekleri |
+| 4 | Sipariş sonrası ölçü değişikliği | `orderChange` | Sipariş sonrası değişiklik |
+| 5 | Fiyat ve kampanya | `price` | Fiyat ve kampanya politikası |
+| 6 | Kargo ve teslimat | `shipping` | Kargo / teslimat |
+| 7 | Ölçü aralıkları ve küçültme | `sizeRanges` | Ölçü aralıkları |
+
+Şema değişikliği gerekmedi: mevcut 7 alan kurallarla birebir örtüşüyor, `shipping` alanı korundu.
+Politika 1/7 çelişkisi metin düzeyinde çözüldü: *listede olmayan ölçü satılmaz; uygun daha büyük
+varyanttan küçültme onaya bağlı istisnadır*; politika 4 bu istisnanın sipariş sonrası aşamasını belirler.
+
+### Taslak yükleme
+`npm run policies:seed -- --apply` → 7 metni `verified=false`, `source=IMPORT` olarak yazar.
+Var olan metin ezilmez; hiçbir kayıt VERIFIED yapılmaz. Panelde her alan
+"TASLAK — ONAY BEKLİYOR" rozetiyle görünür, onay satıcıya aittir.
+
+### Varyant ölçü analizi (`src/lib/products/sizes.ts`)
+Katalogdaki `Boyut/Ebat` değerleri **EN x BOY** olarak ayrıştırılır (gerçek veri: 222–590 benzersiz ölçü).
+- Birebir varyant varsa → doğrulanmış bilgi, doğrudan cevap ("bu ölçü listede var").
+- Yoksa → daha büyük varyantlar listelenir, **küçültme talebi** üretim onayına bağlı olarak belirtilir.
+- Büyütme adayı hiç üretilmez: satın alınan ölçüden büyük üretim vaat edilmez.
+- Katalog verisi yoksa "ölçü mevcut" denmez, ölçü/sipariş no istenir.
+
+### Test
+`tests/policies-aura.test.ts` — 15 test: A) listede olan/olmayan ölçü, B) büyütme vaadi yok,
+C) küçültme onaya bağlı, D) file sorusunda niyet ayrımı, E) fiyat sorusunda kumaş aranmaması,
+F) kargo niyeti, G) doğrulanmamış politika prompt'a girmiyor, H) metin değişince doğrulama düşüyor,
+katalogdan birebir varyantın doğrudan cevaba dönüşmesi. Toplam **354 test**.
+
+### 30 soruluk ölçüm (GÖREV 013 sonrası)
+| Metrik | GÖREV 012 | GÖREV 013 |
+| --- | --- | --- |
+| Niyet doğruluğu | 0.97 | **0.97** |
+| Somut cevap oranı | 0.50 | **0.57** |
+| Yanlış bilgi oranı | 0.00 | **0.00** |
+| Kaçamak cevap oranı | 0.00 | **0.00** |
+| RESOLVED | 0 | **0** |
+
+RESOLVED artmadı çünkü 7 politika **doğrulanmadı** ve ürün alanları hâlâ VERIFIED değil; motor doğru
+davranıp kesin söz vermiyor. Satıcı `/policies` ekranında 7 metni onayladığında işletme kuralına dayalı
+cevaplar devreye girer.

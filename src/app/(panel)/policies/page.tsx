@@ -97,7 +97,7 @@ export default async function PoliciesPage({
                       : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400"
                   }`}
                 >
-                  {policy.verified ? "DOĞRULANDI" : "DOĞRULANMADI"}
+                  {policy.verified ? "DOĞRULANDI" : policy.value.trim() ? "TASLAK — ONAY BEKLİYOR" : "BOŞ"}
                 </span>
               </div>
 
