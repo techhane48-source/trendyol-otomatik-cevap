@@ -44,9 +44,9 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 const VERDICT_LABEL: Record<string, { text: string; className: string }> = {
-  TRUSTED: { text: "GÜVENİLİR", className: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30" },
-  REVIEW: { text: "İNCELEME", className: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/30" },
-  REJECT: { text: "RED", className: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/30" },
+  TRUSTED: { text: "A · OTOMATİK GÜVENİLİR", className: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30" },
+  REVIEW: { text: "C · İNCELEME", className: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/30" },
+  REJECT: { text: "REDDEDİLDİ", className: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/30" },
   EMPTY: { text: "BOŞ", className: "bg-[var(--hover)] text-subtle border-line" },
 };
 
@@ -98,6 +98,11 @@ export default async function ProductBankPage({
     ? (params.durum as Tab)
     : "guvenilir";
   const q = normalize((params.q ?? "").trim());
+
+  // GÖREV 014: insan yalnızca istisnaları inceler → sınıf bazlı sayaçlar.
+  const conflictRows = plans.flatMap((plan) =>
+    plan.fields.filter((field) => field.verdict === "REVIEW" && field.alternatives.length > 0 && field.value),
+  );
 
   const trustedRows = plans.flatMap((plan) =>
     plan.fields
@@ -162,10 +167,10 @@ export default async function ProductBankPage({
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-4">
-          <Kpi label="Güvenilir aday" value={trustedRows.length} tone="text-emerald-600" />
-          <Kpi label="İnceleme" value={summary.review} tone="text-amber-600" />
-          <Kpi label="Doğrulanmış" value={summary.verifiedKept} tone="text-brand-600" />
-          <Kpi label="Boş" value={summary.missing} tone="text-subtle" />
+          <Kpi label="A · Otomatik güvenilir" value={trustedRows.length} tone="text-emerald-600" />
+          <Kpi label="C · Çelişkili" value={conflictRows.length} tone="text-rose-600" />
+          <Kpi label="C · İnceleme" value={Math.max(summary.review - conflictRows.length, 0)} tone="text-amber-600" />
+          <Kpi label="Elle doğrulanmış" value={summary.verifiedKept} tone="text-brand-600" />
         </div>
       </section>
 
@@ -270,7 +275,12 @@ export default async function ProductBankPage({
               </thead>
               <tbody>
                 {selectedPlan.fields.map((field) => {
-                  const verdict = VERDICT_LABEL[field.verified ? "TRUSTED" : field.verdict] ?? VERDICT_LABEL.EMPTY;
+                  const conflict = field.verdict === "REVIEW" && field.alternatives.length > 0;
+                  const verdict = field.verified
+                    ? { text: "ELLE DOĞRULANDI", className: VERDICT_LABEL.TRUSTED.className }
+                    : conflict
+                      ? { text: "C · ÇELİŞKİLİ", className: VERDICT_LABEL.REJECT.className }
+                      : (VERDICT_LABEL[field.verdict] ?? VERDICT_LABEL.EMPTY);
                   return (
                     <tr key={field.key}>
                       <td className="td whitespace-nowrap font-medium">{field.label}</td>
@@ -298,8 +308,11 @@ export default async function ProductBankPage({
                         {field.confidence ? <span className="text-subtle"> · {field.confidence}</span> : null}
                       </td>
                       <td className="td whitespace-nowrap">
-                        <span className={`chip border ${verdict.className}`}>
-                          {field.verified ? "DOĞRULANDI" : verdict.text}
+                        <span
+                          className={`chip border ${verdict.className}`}
+                          title={field.verdictReasons.join(" · ") || "Gerekçe yok"}
+                        >
+                          {verdict.text}
                         </span>
                       </td>
                       <td className="td whitespace-nowrap">
@@ -469,7 +482,7 @@ function BulkTable({
                 <td className="td whitespace-nowrap text-xs">{field.source ? SOURCE_LABEL[field.source] ?? field.source : "—"}</td>
                 <td className="td">
                   <span className="chip border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400">
-                    GÜVENİLİR
+                    A · OTOMATİK GÜVENİLİR
                   </span>
                 </td>
               </tr>

@@ -22,7 +22,8 @@
     "mock:orders": "tsx scripts/mock-orders.ts",
     "quality:product": "tsx scripts/product-quality.mts",
     "quality:intent": "tsx scripts/intent-eval.mts",
-    "policies:seed": "tsx scripts/policies-seed.mts"
+    "policies:seed": "tsx scripts/policies-seed.mts",
+    "quality:trust": "tsx scripts/auto-trust-eval.mts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

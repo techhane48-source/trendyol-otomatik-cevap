@@ -41,6 +41,16 @@ const ATTRIBUTE_NAMES: Record<FieldKey, string[]> = {
   description: [],
 };
 
+/** Katalog özellik adını alan anahtarına çevirir (eşleşme yoksa null). */
+export function fieldKeyForAttributeName(name: string): FieldKey | null {
+  const folded = fold(name);
+  const keys = Object.keys(ATTRIBUTE_NAMES) as FieldKey[];
+  for (const key of keys) {
+    if (ATTRIBUTE_NAMES[key].some((candidate) => folded === candidate || folded.includes(candidate))) return key;
+  }
+  return null;
+}
+
 /** Türkçe karakterleri sadeleştirip küçük harfe çevirir (özellik adı eşleşmesi için). */
 export function fold(value: string): string {
   return value

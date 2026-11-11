@@ -219,20 +219,29 @@ describe("toplu doğrulama", () => {
 });
 
 describe("AI onaysız bilgiyi kesin gerçek olarak kullanmaz", () => {
-  it("doğrulanmamış katalog alanı taslakta usedFacts'a girmez", async () => {
+  it("A sınıfı katalog bilgisi onaysız kullanılır, C sınıfı kullanılmaz", async () => {
     const storeId = await seedStore();
     const main = `MAIN-AI-${Date.now()}`;
     await seedCatalog(storeId, main, [{ name: "Materyal", value: "Keten" }]);
     await seedCard(storeId, main, [{ key: "fabric", label: "Kumaş türü", value: "Keten" }]);
     const questionId = await seedQuestion(storeId, main);
 
-    const unverified = await createAiDraft(
+    // GÖREV 014: tek değerli, yapılandırılmış katalog bilgisi A sınıfıdır → insan onayı beklemez.
+    const autoTrusted = await createAiDraft(
       { questionId, actor: { name: "test" } },
       { prisma, provider: createMockProvider(() => "Kumaş türü ketendir.") },
     );
-    expect(unverified.usedFacts).toHaveLength(0);
+    expect(autoTrusted.usedFacts.some((fact) => fact.source === "CATALOG_AUTO")).toBe(true);
 
-    // Aynı kart, alan doğrulandıktan sonra kullanılır.
+    // Sayfalama yarım kalan (C sınıfı) katalog bilgisi hiç kullanılmaz.
+    await prisma.catalogProduct.updateMany({ where: { storeId, productMainId: main }, data: { truncated: true } });
+    const reviewOnly = await createAiDraft(
+      { questionId, actor: { name: "test" } },
+      { prisma, provider: createMockProvider(() => "Kumaş türü ketendir.") },
+    );
+    expect(reviewOnly.usedFacts).toHaveLength(0);
+
+    // Elle doğrulama her zaman önceliklidir ve kaynak VERIFIED_CARD olur.
     await prisma.productInfo.updateMany({
       where: { storeId, productMainId: main },
       data: {
@@ -247,7 +256,7 @@ describe("AI onaysız bilgiyi kesin gerçek olarak kullanmaz", () => {
       { questionId, actor: { name: "test" } },
       { prisma, provider: createMockProvider(() => "Kumaş türü ketendir.") },
     );
-    expect(verified.usedFacts.length).toBeGreaterThan(0);
+    expect(verified.usedFacts.some((fact) => fact.source === "VERIFIED_CARD")).toBe(true);
   });
 
   it("plan, inceleme sınıfındaki alanı güvenilir saymaz", async () => {

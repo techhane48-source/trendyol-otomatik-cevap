@@ -27,6 +27,7 @@ import {
   type Intent,
 } from "@/lib/intents/taxonomy";
 import { getPolicyContext, policyLabelOf } from "@/lib/policies/service";
+import { getAutoFactsForQuestion, usableAutoFacts, type AutoFact } from "@/lib/products/auto-facts";
 import { analyzeRequestedSize, describeSizeAnalysis, extractRequestedSize, getVariantSizesForQuestion } from "@/lib/products/sizes";
 
 /** Soru kategorisinin gerektirdiği doğrulanmış ürün alanları. */
@@ -268,6 +269,8 @@ export async function createAiDraft(
     productInfo?: string | null;
     /** Geçmiş cevap hafızasını kullan (karşılaştırma ölçümü için kapatılabilir). */
     includeHistory?: boolean;
+    /** GÖREV 014: risk bazlı otomatik güven (A sınıfı katalog bilgisi) kullanılsın mı? Ölçüm için kapatılabilir. */
+    autoTrust?: boolean;
   },
   deps: DraftDeps = {},
 ): Promise<DraftView> {
@@ -320,7 +323,7 @@ export async function createAiDraft(
     }
   }
 
-  const usedFacts = [
+  const usedFacts: Array<{ label: string; value: string; source: "VERIFIED_CARD" | "MANUAL" | "CATALOG_AUTO" }> = [
     ...cardFacts.map((fact) => ({ ...fact, source: "VERIFIED_CARD" as const })),
     ...(manualInfo ? [{ label: "Elle girilen bilgi", value: manualInfo, source: "MANUAL" as const }] : []),
   ];
@@ -352,7 +355,7 @@ export async function createAiDraft(
     }
   }
 
-  const productInfoText =
+  let productInfoText =
     usedFacts.length > 0 ? usedFacts.map((fact) => `${fact.label}: ${fact.value}`).join("\n") : null;
 
   // Sipariş/ölçü değişikliği bağlamı: AI kendi başına onay iddiası üretemez.
@@ -430,6 +433,28 @@ export async function createAiDraft(
     requiredPolicies: requiredPolicyKeys,
     coveredPolicies: coveredPolicyKeys,
   });
+
+  // ---- GÖREV 014: risk bazlı otomatik güven (A sınıfı katalog bilgisi) ----
+  // İnsan yalnızca istisnaları inceler: A sınıfı bilgi tek tek onay beklemeden kullanılır,
+  // B sınıfı prompt'a kesin bilgi olarak girmez, C sınıfı insan incelemesine düşer.
+  let autoFacts: AutoFact[] = [];
+  try {
+    if (input.autoTrust === false) throw new Error("SKIP");
+    autoFacts = usableAutoFacts(
+      await getAutoFactsForQuestion({ storeId: question.storeId, productMainId: question.productMainId }, { prisma }),
+    );
+  } catch {
+    autoFacts = [];
+  }
+
+  for (const fact of autoFacts) {
+    if (verifiedFieldKeys.has(fact.fieldKey)) continue;
+    if (!requiredFieldKeys.includes(fact.fieldKey)) continue;
+    usedFacts.push({ label: fact.label, value: fact.value, source: "CATALOG_AUTO" });
+    verifiedFieldKeys.add(fact.fieldKey);
+  }
+  productInfoText =
+    usedFacts.length > 0 ? usedFacts.map((fact) => `${fact.label}: ${fact.value}`).join("\n") : null;
 
   const missingForIntent = [
     ...requiredFieldKeys

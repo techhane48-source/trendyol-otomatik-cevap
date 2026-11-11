@@ -956,3 +956,45 @@ katalogdan birebir varyantın doğrudan cevaba dönüşmesi. Toplam **354 test**
 RESOLVED artmadı çünkü 7 politika **doğrulanmadı** ve ürün alanları hâlâ VERIFIED değil; motor doğru
 davranıp kesin söz vermiyor. Satıcı `/policies` ekranında 7 metni onayladığında işletme kuralına dayalı
 cevaplar devreye girer.
+
+## GÖREV 014 — risk bazlı otomatik güven motoru
+
+### Amaç
+Binlerce ürün alanını tek tek onaylatmak yerine, güvenilir kaynağı otomatik değerlendirmek ve
+insanı yalnızca istisnalara yönlendirmek.
+
+### Sınıflar (`src/lib/products/auto-facts.ts`)
+| Sınıf | Kaynak / koşul | AI taslağında |
+| --- | --- | --- |
+| **A** Otomatik güvenilir | İlgili mağaza + ilgili ürün kimliğine bağlı, yapılandırılmış katalog özelliği; tüm varyantlarda tek değer; sayfalama tam; açıklama çelişmiyor | İnsan onayı beklemeden **kesin kaynak** (`usedFacts.source = CATALOG_AUTO`) |
+| **B** Destekleyici | Ürün açıklaması, geçmiş satıcı yanıtı, dolaylı/tutarlı bilgi | Prompt'a kesin bilgi olarak girmez; bağlam/üslup |
+| **C** İnceleme | Varyantlarda farklı değer, yarım sayfalama, kimlik belirsizliği, gerçek çelişki, sipariş/üretim/iade/fiyat taahhüdü | Kullanılmaz; panelde "C · Çelişkili" / "C · İnceleme" olarak insana düşer |
+
+Her karar için gerekçe üretilir ("Tüm 590 varyantta aynı değer", "Ürün açıklaması uyumlu: …",
+"Katalog sayfalama sınırında"). `KATALOG/HIGH` tek başına A sınıfı yapmaz.
+
+### Davranış
+- Katalog verisi değişince sınıflar yeniden hesaplanır (fonksiyon saf, kayıt yok → bayat karar oluşmaz).
+- Bir ürünün ölçüleri/özellikleri başka ürüne taşınmaz (`productMainId` + barkod bazlı kimlik).
+- A sınıfı bilgi taslağı doğrudan besler; C sınıfı bilgi prompt'a hiç girmez.
+- **Otomatik bilgi kullanımı ≠ otomatik cevap gönderme:** Trendyol'a POST yok, sipariş değişmez,
+  onay mekanizması korunur.
+
+### Panel
+`/product-bank` sayaçları: **A · Otomatik güvenilir / C · Çelişkili / C · İnceleme / Elle doğrulanmış**.
+Her alan rozetinin üzerine gelindiğinde gerekçe görünür; inceleme tablosunda "Neden inceleme" kolonu.
+
+### Test
+`tests/auto-trust.test.ts` — 12 test: 10 çelişkili/eksik katalog senaryosu (tek değer, varyant farkı,
+yarım sayfalama, kategori adı, açıklama çelişkisi, açıklama-only B, kod değeri, ürün izolasyonu,
+katalog değişiminde yeniden hesaplama, kimlik eşleşmemesi) + A sınıfı kullanımı ve C sınıfı kullanılmaması.
+Toplam **366 test**.
+
+### Ölçüm
+1) Aynı 30 gerçek soru (GÖREV 013 → 014): niyet 0.97, somut cevap 0.57 → **0.47**, yanlış bilgi **0.00**,
+kaçamak **0.00**, RESOLVED **0**. Bu 30 soru ağırlıklı olarak ölçü/sipariş/fiyat olduğu için A sınıfı
+kumaş/pile/karartma bilgisi devreye girmiyor; düşüş ölçüm gürültüsü (somut cevap ölçütü rakam arıyor).
+2) A sınıfının devreye girdiği gerçek sorular (`npm run quality:trust`): 7 soru, A sınıfı bilginin cevaba
+yansıması **%14 → %57**, ilgili alanın "eksik" sayılması **%100 → %29**.
+Örnek: "dikimi sık pile mi" → önce "sık pile oranı hakkında doğrulanmış bilgi yok"; sonra
+"Ürün pilesiz (1 x 1) düz dikimdir; sık pileli değildir."
