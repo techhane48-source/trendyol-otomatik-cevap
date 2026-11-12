@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { getEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
+import { evaluateChangeRule, getStoreSettings } from "@/lib/store/settings";
 import type { PrismaClient } from "@/generated/prisma/client";
 import {
   createOrdersClient,
@@ -272,13 +273,21 @@ export async function createChangeRequestFromQuestion(
       live.some((pkg) => pkg.customerRef && pkg.customerRef === customerRefOf(question.customerId)),
   );
 
+  // GÖREV 018: mağaza bazlı sipariş kuralı (yalnızca kuralı olan mağazada etkili).
+  const storeSettings = await getStoreSettings(storeId);
+  const ruleEvaluation = evaluateChangeRule(storeSettings, live[0]?.status ?? null);
+  const ruleReason = ruleEvaluation?.reason ?? null;
+
   // Birden fazla paket varsa ve tek eşleşme yoksa insan incelemesi.
   const decisions = live.map((pkg) => pkg.statusDecision);
-  const decision: "CAN_REQUEST" | "TOO_LATE" | "HUMAN_REVIEW" = decisions.includes("TOO_LATE")
+  let decision: "CAN_REQUEST" | "TOO_LATE" | "HUMAN_REVIEW" = decisions.includes("TOO_LATE")
     ? "TOO_LATE"
     : decisions.every((item) => item === "CAN_REQUEST")
       ? "CAN_REQUEST"
       : "HUMAN_REVIEW";
+
+  if (ruleEvaluation?.decision === "DENY") decision = "TOO_LATE";
+  else if (ruleEvaluation?.decision === "HUMAN_REVIEW" && decision === "CAN_REQUEST") decision = "HUMAN_REVIEW";
 
   const allLines = live.flatMap((pkg) => pkg.lines.map((line) => ({ ...line, shipmentPackageId: pkg.shipmentPackageId })));
   const lineMatch = matchOrderLine(
@@ -293,6 +302,7 @@ export async function createChangeRequestFromQuestion(
   let status: "PENDING_REVIEW" | "REJECTED" | "NEEDS_VERIFICATION";
   let message: string;
   const notes: string[] = [];
+  if (ruleReason) notes.push(`Mağaza kuralı: ${ruleReason}`);
 
   if (decision === "TOO_LATE") {
     status = "REJECTED";

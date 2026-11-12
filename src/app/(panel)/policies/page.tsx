@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { POLICY_DEFS, getPolicyContext } from "@/lib/policies/service";
@@ -43,7 +44,8 @@ export default async function PoliciesPage({
   const params = await searchParams;
 
   const prisma = getPrisma();
-  const store = await prisma.store.findFirst({ orderBy: { createdAt: "asc" } });
+  const currentUser = await requireUser();
+  const store = await prisma.store.findUnique({ where: { id: currentUser.storeId } });
 
   if (!access.ok || !store) {
     return (

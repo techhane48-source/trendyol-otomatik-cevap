@@ -161,3 +161,12 @@ export function IconQueue(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function IconUser(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" />
+    </svg>
+  );
+}

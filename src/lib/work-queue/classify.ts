@@ -8,9 +8,9 @@ import { parseSizeRequest } from "@/lib/products/sizes";
  * Sıra önemlidir: iptal/sensitive durumlar üretim talebinden önce gelir.
  */
 
-export type WorkCategory = "AUTO_CANDIDATE" | "SUPPORT" | "WORKSHOP" | "NEEDS_INFO";
+export type WorkCategory = "AUTO_CANDIDATE" | "HUMAN_REVIEW" | "ACTION_REQUEST" | "NEEDS_INFO";
 export type WorkPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
-export type WorkTeam = "AI" | "Müşteri Temsilcisi" | "Atölye";
+export type WorkTeam = "AI" | "Müşteri Temsilcisi" | "İşlem Ekibi" | "Atölye" | string;
 
 export interface ClassifyInput {
   text: string;
@@ -54,7 +54,7 @@ export function classifyWork(input: ClassifyInput): ClassifyResult {
   // 1) İptal edilmiş siparişe üretim talebi açılmaz → temsilci.
   if (orderCancelled) {
     return {
-      category: "SUPPORT",
+      category: "HUMAN_REVIEW",
       team: "Müşteri Temsilcisi",
       priority: "URGENT",
       reasons: ["Sipariş Trendyol'da iptal edilmiş; üretim/ölçü değişikliği açılamaz."],
@@ -64,7 +64,7 @@ export function classifyWork(input: ClassifyInput): ClassifyResult {
   // 2) İade / para / teslimat itirazı → temsilci, öncelikli.
   if (REFUND.test(text)) {
     return {
-      category: "SUPPORT",
+      category: "HUMAN_REVIEW",
       team: "Müşteri Temsilcisi",
       priority: "URGENT",
       reasons: ["İade/ücret iadesi ifadesi var; banka/PSP verisi bu sistemde yok.", "İnsan değerlendirmesi zorunlu."],
@@ -73,7 +73,7 @@ export function classifyWork(input: ClassifyInput): ClassifyResult {
 
   if (DELIVERY_COMPLAINT.test(text)) {
     return {
-      category: "SUPPORT",
+      category: "HUMAN_REVIEW",
       team: "Müşteri Temsilcisi",
       priority: "HIGH",
       reasons: ["Teslimat/gecikme itirazı; otomatik 'çözüldü' sayılamaz."],
@@ -83,7 +83,7 @@ export function classifyWork(input: ClassifyInput): ClassifyResult {
   // 3) Fiyat anlaşmazlığı → temsilci.
   if (has(input.intents, "PRICE") || SENSITIVE_PRICE.test(text)) {
     return {
-      category: "SUPPORT",
+      category: "HUMAN_REVIEW",
       team: "Müşteri Temsilcisi",
       priority: "NORMAL",
       reasons: ["Fiyat/kampanya konusu; canlı fiyat geçmişi olmadan kesin cevap verilemez."],
@@ -117,7 +117,7 @@ export function classifyWork(input: ClassifyInput): ClassifyResult {
 
     if (CHANGE.test(text)) reasons.push("Metinde değişiklik/üretim talebi ifadesi var.");
 
-    return { category: "WORKSHOP", team: "Atölye", priority, reasons };
+    return { category: "ACTION_REQUEST", team: "İşlem Ekibi", priority, reasons };
   }
 
   // 5) Doğrulanmış bilgiyle cevaplanabilen ürün soruları → otomatik aday.
@@ -149,11 +149,14 @@ export function classifyWork(input: ClassifyInput): ClassifyResult {
   return { category: "NEEDS_INFO", team: "Müşteri Temsilcisi", priority: "NORMAL", reasons };
 }
 
-export const CATEGORY_LABELS: Record<WorkCategory, string> = {
+export const CATEGORY_LABELS: Record<string, string> = {
   AUTO_CANDIDATE: "Otomatik cevap adayı",
-  SUPPORT: "Müşteri temsilcisi",
-  WORKSHOP: "Atölye",
+  HUMAN_REVIEW: "İnsan incelemesi",
+  ACTION_REQUEST: "İşlem talebi",
   NEEDS_INFO: "Bilgi eksik",
+  // geriye dönük
+  SUPPORT: "İnsan incelemesi",
+  WORKSHOP: "İşlem talebi",
 };
 
 export const PRIORITY_LABELS: Record<WorkPriority, string> = {

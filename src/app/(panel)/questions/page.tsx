@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getPrisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
@@ -119,7 +120,9 @@ export default async function QuestionsPage({
 
   try {
     const prisma = getPrisma();
+    const user = await requireUser();
     const rows = await prisma.question.findMany({
+      where: { storeId: user.storeId },
       orderBy: [{ askedAt: "desc" }, { firstSeenAt: "desc" }],
       take: 50,
       select: {

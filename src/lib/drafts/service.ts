@@ -1076,6 +1076,7 @@ export async function getDraftHistory(
 
 /** Panel için: son revizyonu ve durumu ile birlikte sorular. */
 export async function listQuestionsForDrafting(
+  storeId: string,
   options: { limit?: number; status?: "WAITING_FOR_ANSWER" | "ANSWERED" | "REJECTED" | "UNKNOWN" } = {},
   deps: DraftDeps = {},
 ) {
@@ -1083,7 +1084,7 @@ export async function listQuestionsForDrafting(
   const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
 
   return prisma.question.findMany({
-    where: options.status ? { status: options.status } : undefined,
+    where: { storeId, ...(options.status ? { status: options.status } : {}) },
     orderBy: [{ status: "asc" }, { askedAt: "desc" }],
     take: limit,
     include: {

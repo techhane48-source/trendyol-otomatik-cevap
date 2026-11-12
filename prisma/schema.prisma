@@ -20,12 +20,14 @@ model Store {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  questions Question[]
-  syncRuns  SyncRun[]
-  productInfos ProductInfo[]
+  questions        Question[]
+  syncRuns         SyncRun[]
+  productInfos     ProductInfo[]
   fieldSuggestions ProductFieldSuggestion[]
-  catalogProducts CatalogProduct[]
-  policies        StorePolicy[]
+  catalogProducts  CatalogProduct[]
+  policies         StorePolicy[]
+  users            User[]
+  settings         StoreSettings?
 
   @@map("stores")
 }
@@ -39,32 +41,32 @@ enum QuestionStatus {
 
 /// Trendyol'dan çekilen müşteri sorusu. Salt okunur ayna kayıt.
 model Question {
-  id                 String         @id @default(cuid())
-  storeId            String
-  store              Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   /// Trendyol soru kimliği. Mağaza bazında benzersizdir.
   trendyolQuestionId BigInt
 
-  text               String
-  status             QuestionStatus @default(UNKNOWN)
+  text      String
+  status    QuestionStatus @default(UNKNOWN)
   /// Trendyol'daki ham durum metni
-  rawStatus          String?
+  rawStatus String?
 
-  productName        String?
-  productMainId      String?
-  productId          String?
-  customerId         String?
+  productName   String?
+  productMainId String?
+  productId     String?
+  customerId    String?
 
   /// Varsa satıcının verdiği cevap (salt okunur ayna; gönderim yapılmaz)
-  answerText         String?
+  answerText String?
 
   /// Trendyol'daki oluşturma tarihi
-  askedAt            DateTime?
-  answeredAt         DateTime?
+  askedAt    DateTime?
+  answeredAt DateTime?
 
   /// API'den gelen ham veri (ek alanlar dahil)
-  raw                Json?
+  raw Json?
 
   /// Geçmiş cevap doğrulama durumu (yalnızca answerText doluysa anlamlı)
   answerReviewStatus AnswerReviewStatus @default(UNREVIEWED)
@@ -72,18 +74,18 @@ model Question {
   answerReviewedBy   String?
   answerReviewedAt   DateTime?
 
-  firstSeenAt        DateTime       @default(now())
-  lastSyncedAt       DateTime       @default(now())
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  firstSeenAt  DateTime @default(now())
+  lastSyncedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  drafts AnswerDraft[]
 
   @@unique([storeId, trendyolQuestionId])
   @@index([storeId, status])
   @@index([storeId, answerReviewStatus])
   @@index([askedAt])
   @@map("questions")
-
-  drafts AnswerDraft[]
 }
 
 enum ProductInfoStatus {
@@ -111,7 +113,7 @@ model ProductInfo {
 
   productMainId String
   /// Varyant kimliği; boşsa bilgi ana ürün düzeyindedir.
-  productId String?
+  productId     String?
 
   title      String?
   /// Doğrulanmış özellikler: [{ "label": "Kumaş", "value": "Bambu dokulu tül" }]
@@ -138,28 +140,28 @@ model ProductInfo {
 /// Ürün bilgi kartındaki her değişikliğin geçmişi (kim, ne zaman, ne değişti).
 /// Geçmiş satıcı cevaplarından çıkarılan ürün alanı adayı. İnsan onayı olmadan doğrulanmış sayılmaz.
 model ProductFieldSuggestion {
-  id         String   @id @default(cuid())
-  storeId    String
-  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  id            String  @id @default(cuid())
+  storeId       String
+  store         Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
   productMainId String
-  productId  String?
+  productId     String?
 
-  fieldKey   String
-  value      String
+  fieldKey          String
+  value             String
   /// Kaynak soru kimlikleri (Trendyol)
   sourceQuestionIds Json
   /// Aynı alan için birbirini dışlayan (kesin çelişen) değer var mı?
-  conflict   Boolean  @default(false)
+  conflict          Boolean          @default(false)
   /// Çelişki yok ama değer belirsiz: insan incelemesi gerekir.
-  needsReview Boolean @default(false)
-  conflictValues Json?
-  status     SuggestionStatus @default(PENDING)
-  reviewedBy String?
-  reviewedAt DateTime?
-  note       String?
+  needsReview       Boolean          @default(false)
+  conflictValues    Json?
+  status            SuggestionStatus @default(PENDING)
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  note              String?
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([storeId, productMainId, status])
   @@map("product_field_suggestions")
@@ -277,17 +279,17 @@ model AnswerDraft {
   usageEstimated   Boolean @default(false)
 
   /// Taslakta yararlanılan geçmiş cevaplar (soru kimliği + benzerlik + gerekçe)
-  historyUsed      Json?
+  historyUsed         Json?
   /// Doğrulanmış bilgiyle cevaplandı mı?
-  resolution       DraftResolution?
+  resolution          DraftResolution?
   /// GÖREV 012 — algılanan soru niyeti (CUSTOM_SIZE, PRICE, ORDER_STATUS, ...)
-  intent       String?
+  intent              String?
   /// GÖREV 012 — cevap stratejisi: DIRECT | PARTIAL | ASK_DETAIL | HUMAN_REVIEW
-  strategy     String?
+  strategy            String?
   /// Canlı fiyat/sipariş verisi gerektiren niyetlerde insan incelemesi şart
-  requiresHumanReview Boolean @default(false)
+  requiresHumanReview Boolean          @default(false)
   /// Cevapta kullanılan doğrulanmış mağaza politikaları: [{ "label": ..., "value": ... }]
-  policiesUsed Json?
+  policiesUsed        Json?
 
   createdBy  String?
   approvedBy String?
@@ -310,13 +312,13 @@ model AnswerDraft {
 
 /// Taslak üzerindeki her işlemin denetim kaydı (kim, ne zaman, ne yaptı).
 model DraftEvent {
-  id      String      @id @default(cuid())
-  draftId String
-  draft   AnswerDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  action  DraftAction
-  actor   String
-  note    String?
-  createdAt DateTime  @default(now())
+  id        String      @id @default(cuid())
+  draftId   String
+  draft     AnswerDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  action    DraftAction
+  actor     String
+  note      String?
+  createdAt DateTime    @default(now())
 
   @@index([draftId, createdAt])
   @@map("draft_events")
@@ -331,20 +333,20 @@ enum SyncRunStatus {
 
 /// Her senkronizasyon denemesinin kaydı: başlangıç, sonuç, sayaçlar, hata kodu.
 model SyncRun {
-  id           String        @id @default(cuid())
-  storeId      String
-  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
-  status       SyncRunStatus @default(RUNNING)
-  trigger      String        @default("manual")
+  status  SyncRunStatus @default(RUNNING)
+  trigger String        @default("manual")
 
-  startedAt    DateTime      @default(now())
-  finishedAt   DateTime?
-  durationMs   Int?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  durationMs Int?
 
-  fetchedCount Int           @default(0)
-  savedCount   Int           @default(0)
-  pagesFetched Int           @default(0)
+  fetchedCount Int @default(0)
+  savedCount   Int @default(0)
+  pagesFetched Int @default(0)
 
   /// Hata durumunda HTTP kodu (401/403/429/5xx vb.) veya hata sınıfı
   errorCode    String?
@@ -352,9 +354,9 @@ model SyncRun {
   errorMessage String?
 
   /// Kullanılan filtreler (status, tarih aralığı vb.)
-  params       Json?
+  params Json?
 
-  createdAt    DateTime      @default(now())
+  createdAt DateTime @default(now())
 
   @@index([storeId, startedAt])
   @@map("sync_runs")
@@ -363,7 +365,7 @@ model SyncRun {
 /// Her LLM çağrısının (başarılı/başarısız) kullanım ve maliyet kaydı.
 /// Anahtar, prompt metni veya müşteri verisi SAKLANMAZ.
 model LlmUsage {
-  id            String   @id @default(cuid())
+  id            String  @id @default(cuid())
   provider      String
   model         String
   promptVersion String
@@ -372,18 +374,18 @@ model LlmUsage {
   /// Hata durumunda güvenli kod (HTTP_429, TIMEOUT, INVALID_JSON ...)
   errorCode     String?
 
-  durationMs    Int
-  inputTokens   Int      @default(0)
-  outputTokens  Int      @default(0)
-  totalTokens   Int      @default(0)
+  durationMs       Int
+  inputTokens      Int     @default(0)
+  outputTokens     Int     @default(0)
+  totalTokens      Int     @default(0)
   /// Sağlayıcı usage vermediyse tahmin edilir ve `estimated=true` olur.
-  estimated     Boolean  @default(false)
-  estimatedCostUSD Float @default(0)
+  estimated        Boolean @default(false)
+  estimatedCostUSD Float   @default(0)
 
   /// Çağrının bağlamı (müşteri verisi değil)
   draftId    String?
   questionId String?
-  purpose    String   @default("draft")
+  purpose    String  @default("draft")
 
   createdAt DateTime @default(now())
 
@@ -395,13 +397,13 @@ model LlmUsage {
 
 /// Kalite değerlendirme seti (30–50 örnek).
 model QualitySet {
-  id        String   @id @default(cuid())
-  name      String
-  createdBy String
+  id                String   @id @default(cuid())
+  name              String
+  createdBy         String
   /// Sabitlenen örnek soru kimlikleri (tekrar çalıştırmada aynı sorular kullanılır)
   sampleQuestionIds Json?
-  sampleCount Int @default(0)
-  createdAt DateTime @default(now())
+  sampleCount       Int      @default(0)
+  createdAt         DateTime @default(now())
 
   runs QualityRun[]
 
@@ -410,20 +412,20 @@ model QualitySet {
 
 /// Bir setin tek değerlendirme koşusu (prompt sürümü karşılaştırması için).
 model QualityRun {
-  id            String   @id @default(cuid())
+  id            String     @id @default(cuid())
   setId         String
   set           QualitySet @relation(fields: [setId], references: [id], onDelete: Cascade)
   promptVersion String
   provider      String
   model         String
   /// RUNNING | COMPLETED | PARTIAL | FAILED
-  status        String   @default("RUNNING")
+  status        String     @default("RUNNING")
   startedBy     String
-  startedAt     DateTime @default(now())
+  startedAt     DateTime   @default(now())
   finishedAt    DateTime?
-  totalCostUSD  Float    @default(0)
-  totalTokens   Int      @default(0)
-  itemCount     Int      @default(0)
+  totalCostUSD  Float      @default(0)
+  totalTokens   Int        @default(0)
+  itemCount     Int        @default(0)
 
   items QualityItem[]
 
@@ -433,9 +435,9 @@ model QualityRun {
 
 /// Değerlendirilen tek örnek: maskelenmiş soru, AI cevabı, otomatik kontroller, insan puanı.
 model QualityItem {
-  id       String     @id @default(cuid())
-  runId    String
-  run      QualityRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id         String     @id @default(cuid())
+  runId      String
+  run        QualityRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   /// Kaynak soru (silinmez; yalnızca referans)
   questionId String?
 
@@ -445,16 +447,16 @@ model QualityItem {
   /// Otomatik kontroller: warnings, eksik bilgi, vaat tespiti, üslup metrikleri
   autoChecks     Json?
   /// NEEDS_INFO / OK / EMPTY
-  outcome        String  @default("OK")
-  inputTokens    Int     @default(0)
-  outputTokens   Int     @default(0)
-  costUSD        Float   @default(0)
-  durationMs     Int     @default(0)
+  outcome        String @default("OK")
+  inputTokens    Int    @default(0)
+  outputTokens   Int    @default(0)
+  costUSD        Float  @default(0)
+  durationMs     Int    @default(0)
 
-  humanScore   Int?
-  humanNote    String?
-  evaluatedBy  String?
-  evaluatedAt  DateTime?
+  humanScore  Int?
+  humanNote   String?
+  evaluatedBy String?
+  evaluatedAt DateTime?
 
   createdAt DateTime @default(now())
 
@@ -464,20 +466,20 @@ model QualityItem {
 
 /// Trendyol sipariş paketi (salt okunur ayna). Adres/telefon/ödeme verisi SAKLANMAZ.
 model Order {
-  id               String   @id @default(cuid())
-  storeId          String
-  orderNumber      String
-  shipmentPackageId BigInt?
+  id                     String    @id @default(cuid())
+  storeId                String
+  orderNumber            String
+  shipmentPackageId      BigInt?
   /// Paket durumu (Created, Picking, Invoiced, Shipped, Delivered, Cancelled, Returned, UnPacked, Awaiting)
-  status           String
-  rawStatus        String?
-  orderedAt        DateTime?
+  status                 String
+  rawStatus              String?
+  orderedAt              DateTime?
   /// Kargo firması adı (Trendyol cargoProviderName)
-  cargoProviderName     String?
+  cargoProviderName      String?
   /// Kargo takip numarası — yalnızca müşteriye takip bilgisi vermek için; loglanmaz.
-  cargoTrackingNumber   String?
+  cargoTrackingNumber    String?
   /// Kargo takip bağlantısı (varsa)
-  cargoTrackingLink     String?
+  cargoTrackingLink      String?
   /// Trendyol tahmini kargoya teslim aralığı (müşteriye teslim tarihi DEĞİLDİR)
   estimatedDeliveryStart DateTime?
   estimatedDeliveryEnd   DateTime?
@@ -490,12 +492,12 @@ model Order {
   /// Bu kaydın Trendyol'dan son çekildiği an (tazelik göstergesi)
   fetchedAt              DateTime?
   /// Müşteri kimliğinin tuzlanmış özeti (düz metin PII saklanmaz)
-  customerRef      String?
-  syncedAt         DateTime @default(now())
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  customerRef            String?
+  syncedAt               DateTime  @default(now())
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
-  lines  OrderLine[]
+  lines          OrderLine[]
   changeRequests OrderChangeRequest[]
 
   @@unique([storeId, orderNumber])
@@ -572,43 +574,43 @@ enum OrderChangeAction {
 
 /// Ölçü değişikliği talebi. Onay yalnızca yerel kayıttır; Trendyol'a hiçbir yazma yapılmaz.
 model OrderChangeRequest {
-  id                 String            @id @default(cuid())
-  storeId            String
-  questionId         String?
-  orderId            String?
-  order              Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  orderNumber        String
-  shipmentPackageId  BigInt?
+  id                String  @id @default(cuid())
+  storeId           String
+  questionId        String?
+  orderId           String?
+  order             Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderNumber       String
+  shipmentPackageId BigInt?
   /// Trendyol sipariş kalemi kimliği (harici; ilişki zorunlu değil)
-  lineId             String?
+  lineId            String?
 
-  originalWidthCm    Int?
-  originalHeightCm   Int?
-  requestedWidthCm   Int?
-  requestedHeightCm  Int?
+  originalWidthCm   Int?
+  originalHeightCm  Int?
+  requestedWidthCm  Int?
+  requestedHeightCm Int?
 
   /// En/boy yönü metinden kesin çıkarılamadıysa true
-  orientationUncertain Boolean        @default(false)
+  orientationUncertain Boolean @default(false)
 
-  status             OrderChangeStatus @default(PENDING_REVIEW)
-  orderStatusAtRequest String?
+  status                OrderChangeStatus @default(PENDING_REVIEW)
+  orderStatusAtRequest  String?
   orderStatusAtApproval String?
   /// Müşteri sahipliği API verisiyle doğrulanabildi mi?
-  ownershipVerified  Boolean           @default(false)
+  ownershipVerified     Boolean           @default(false)
   /// Sahiplik doğrulamasını kim, ne zaman yaptı (serbest metin notundan ayrı)
-  ownershipVerifiedBy String?
-  ownershipVerifiedAt DateTime?
-  matchNote          String?
+  ownershipVerifiedBy   String?
+  ownershipVerifiedAt   DateTime?
+  matchNote             String?
 
-  createdBy          String?
-  approvedAt         DateTime?
-  approvedBy         String?
-  rejectedAt         DateTime?
-  rejectedBy         String?
-  reviewNote         String?
+  createdBy  String?
+  approvedAt DateTime?
+  approvedBy String?
+  rejectedAt DateTime?
+  rejectedBy String?
+  reviewNote String?
 
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   events OrderChangeEvent[]
 
@@ -620,13 +622,13 @@ model OrderChangeRequest {
 
 /// Talep denetim izi (audit).
 model OrderChangeEvent {
-  id        String            @id @default(cuid())
+  id        String             @id @default(cuid())
   requestId String
   request   OrderChangeRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   action    OrderChangeAction
   actor     String
   details   Json?
-  createdAt DateTime          @default(now())
+  createdAt DateTime           @default(now())
 
   @@index([requestId, createdAt])
   @@map("order_change_events")
@@ -652,11 +654,11 @@ model CatalogProduct {
   truncated    Boolean @default(false)
 
   /// Ortak/çoğunluk özellikler: [{ attributeId, name, value, share }]
-  attributes Json?
+  attributes     Json?
   /// Katalogda görülen benzersiz özellik adları (teşhis için).
   attributeNames Json?
 
-  fetchedAt DateTime  @default(now())
+  fetchedAt DateTime @default(now())
   lastError String?
 
   @@unique([storeId, productMainId])
@@ -671,6 +673,8 @@ enum WorkCategory {
   SUPPORT
   WORKSHOP
   NEEDS_INFO
+  HUMAN_REVIEW
+  ACTION_REQUEST
 }
 
 enum WorkStatus {
@@ -698,9 +702,9 @@ enum ProductionStage {
 
 /// Bir müşteri sorusunun operasyon karşılığı. Soru başına tek kayıt (idempotent).
 model WorkItem {
-  id         String  @id @default(cuid())
+  id         String @id @default(cuid())
   storeId    String
-  questionId String  @unique
+  questionId String @unique
 
   category WorkCategory
   /// Sorumlu ekip: "AI" | "Müşteri Temsilcisi" | "Atölye"
@@ -709,17 +713,20 @@ model WorkItem {
   status   WorkStatus   @default(NEW)
 
   /// Sınıflandırma gerekçeleri (açıklanabilir kurallar)
-  reasons Json?
+  reasons               Json?
   /// Sipariş numarası (varsa; panelde yalnızca yetkili oturuma gösterilir)
-  orderNumber String?
+  orderNumber           String?
   /// MATCHED | MISMATCH | UNVERIFIED | NOT_FOUND | UNAVAILABLE
-  orderMatch  String?
+  orderMatch            String?
   /// Siparişin sınıflandırma anındaki Trendyol durumu
   orderStatusAtClassify String?
   /// Kullanılan bilgi kaynakları [{ type,label,at }]
-  sources Json?
+  sources               Json?
   /// AI taslağı (varsa)
-  draftId String?
+  draftId               String?
+
+  /// Mağaza yapılandırmasındaki işlem türü anahtarı (ör. measure_change)
+  requestTypeKey String?
 
   assignedTo String?
 
@@ -755,4 +762,85 @@ model WorkItemEvent {
 
   @@index([workItemId, createdAt])
   @@map("work_item_events")
+}
+
+// ---------------- GÖREV 018: çok mağazalı SaaS altyapısı ----------------
+
+enum UserRole {
+  OWNER
+  ADMIN
+  SUPPORT
+}
+
+/// Mağaza kullanıcısı. Şifre yalnızca bcrypt hash olarak saklanır.
+model User {
+  id           String    @id @default(cuid())
+  storeId      String
+  email        String
+  passwordHash String
+  name         String?
+  role         UserRole  @default(SUPPORT)
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions Session[]
+  attempts LoginAttempt[]
+  store    Store          @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, email])
+  @@index([email])
+  @@map("users")
+}
+
+/// Oturum. Ham token yalnızca çerezde; veritabanında SHA-256 özeti tutulur.
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+  ipHash     String?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Giriş denemesi (hız sınırı ve denetim). E-posta düz metin tutulmaz.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  emailHash String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([emailHash, createdAt])
+  @@map("login_attempts")
+}
+
+/// Mağaza bazlı yapılandırma: iş akışı kategorileri, sipariş kuralları, modüller.
+model StoreSettings {
+  id      String @id @default(cuid())
+  storeId String @unique
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// [{ key, label, team, category, orderRule? }]
+  workflow     Json?
+  /// [{ key, label, description? }] — mağazanın işlem talep türleri
+  requestTypes Json?
+  /// { changeRequest: { allowedStatuses: [...], blockedStatuses: [...], unknown: "HUMAN_REVIEW" } }
+  orderRules   Json?
+  /// { showcase: boolean, catalog: boolean, changeRequests: boolean, workQueue: boolean }
+  modules      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("store_settings")
 }

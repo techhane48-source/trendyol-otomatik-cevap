@@ -1,9 +1,10 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
-import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
+import { currentUser } from "@/lib/auth/session";
+import type { WorkActor } from "@/lib/work-queue/service";
 import {
   approveWorkItem,
   completeWorkItem,
@@ -11,97 +12,68 @@ import {
   rejectWorkItem,
   setProductionStage,
   startWorkReview,
-  WorkAccessError,
-  WorkError,
 } from "@/lib/work-queue/service";
 
 /**
- * İş kuyruğu sunucu aksiyonları (GÖREV 017).
+ * İş kuyruğu sunucu aksiyonları (GÖREV 018).
  *
- * Panel erişimi tek paylaşımlı anahtarla korunur; oturum açmış panel kullanıcısı
- * ADMIN rolüyle işlem yapar. Gerçek kullanıcı/rol altyapısı yok — bu sınırlama
- * README'de ve iş kuyruğu sayfasında açıkça yazılıdır.
+ * Oturumdaki kullanıcının mağazası zorunludur; başka mağazanın iş kaydı
+ * kimliği bilinse bile servis `storeId` filtresi nedeniyle erişim reddedilir.
+ * Rol eşlemesi: OWNER/ADMIN → ADMIN, SUPPORT → SUPPORT.
  */
 
-async function guard(): Promise<string | null> {
-  const store = await cookies();
-  const token = store.get(ACCESS_COOKIE_NAME)?.value;
-  if (!checkAccess(token)) return "yetkisiz";
-  return null;
-}
-
-function actor() {
-  return { name: process.env.ADMIN_ACTOR_NAME?.trim() || "panel", role: "ADMIN" as const };
-}
-
-function failure(error: unknown): string {
-  if (error instanceof WorkAccessError) return "yetkisiz";
-  if (error instanceof WorkError) return error.code.toLowerCase();
-  return "hata";
+async function context(): Promise<{ storeId: string; actor: WorkActor } | null> {
+  const user = await currentUser();
+  if (!user) return null;
+  return {
+    storeId: user.storeId,
+    actor: { name: user.email, role: user.role === "SUPPORT" ? "SUPPORT" : "ADMIN" },
+  };
 }
 
 export async function ensureQueueAction(): Promise<void> {
-  if (await guard()) return;
+  const ctx = await context();
+  if (!ctx) redirect("/giris");
   try {
-    await ensureWorkItems({});
+    await ensureWorkItems({ storeId: ctx.storeId });
   } catch {
-    // sessiz: sayfa mesaj gösterir
+    // sayfa mesaj gösterir
+  }
+  revalidatePath("/work-queue");
+}
+
+async function withContext(formData: FormData, run: (storeId: string, workItemId: string, actor: WorkActor) => Promise<unknown>) {
+  const ctx = await context();
+  if (!ctx) redirect("/giris");
+  const workItemId = String(formData.get("id") ?? "");
+  try {
+    await run(ctx.storeId, workItemId, ctx.actor);
+  } catch {
+    // yetkisiz/geçişsiz durumda sessiz kal; sayfa yenilenir
   }
   revalidatePath("/work-queue");
 }
 
 export async function startReviewAction(formData: FormData): Promise<void> {
-  if (await guard()) return;
-  const workItemId = String(formData.get("id") ?? "");
-  try {
-    await startWorkReview({ workItemId, actor: actor() });
-  } catch {
-    // durum değişmediyse sayfa yeniden yüklenir
-  }
-  revalidatePath("/work-queue");
+  await withContext(formData, (storeId, workItemId, actor) => startWorkReview({ storeId, workItemId, actor }));
 }
 
 export async function approveAction(formData: FormData): Promise<void> {
-  if (await guard()) return;
-  const workItemId = String(formData.get("id") ?? "");
-  try {
-    await approveWorkItem({ workItemId, actor: actor(), note: String(formData.get("note") ?? "") || undefined });
-  } catch {
-    // yetkisiz/geçişsiz durumda sessiz kal
-  }
-  revalidatePath("/work-queue");
+  const note = String(formData.get("note") ?? "") || undefined;
+  await withContext(formData, (storeId, workItemId, actor) => approveWorkItem({ storeId, workItemId, actor, note }));
 }
 
 export async function rejectAction(formData: FormData): Promise<void> {
-  if (await guard()) return;
-  const workItemId = String(formData.get("id") ?? "");
-  try {
-    await rejectWorkItem({ workItemId, actor: actor(), note: String(formData.get("note") ?? "") || undefined });
-  } catch {
-    // sessiz
-  }
-  revalidatePath("/work-queue");
+  const note = String(formData.get("note") ?? "") || undefined;
+  await withContext(formData, (storeId, workItemId, actor) => rejectWorkItem({ storeId, workItemId, actor, note }));
 }
 
 export async function completeAction(formData: FormData): Promise<void> {
-  if (await guard()) return;
-  const workItemId = String(formData.get("id") ?? "");
-  try {
-    await completeWorkItem({ workItemId, actor: actor(), note: String(formData.get("note") ?? "") || undefined });
-  } catch {
-    // sessiz
-  }
-  revalidatePath("/work-queue");
+  const note = String(formData.get("note") ?? "") || undefined;
+  await withContext(formData, (storeId, workItemId, actor) => completeWorkItem({ storeId, workItemId, actor, note }));
 }
 
 export async function stageAction(formData: FormData): Promise<void> {
-  if (await guard()) return;
-  const workItemId = String(formData.get("id") ?? "");
   const stage = String(formData.get("stage") ?? "") as "NOT_STARTED" | "CUTTING" | "SEWING" | "PACKED" | "SHIPPED";
-  try {
-    await setProductionStage({ workItemId, actor: actor(), stage });
-  } catch (error) {
-    failure(error);
-  }
-  revalidatePath("/work-queue");
+  await withContext(formData, (storeId, workItemId, actor) => setProductionStage({ storeId, workItemId, actor, stage }));
 }

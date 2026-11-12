@@ -5,6 +5,7 @@ import { detectIntents } from "@/lib/intents/taxonomy";
 import { maskPii } from "@/lib/llm/sanitize";
 import { extractOrderNumber } from "@/lib/orders/decision";
 import { classifyWork, type ClassifyInput, type WorkCategory, type WorkPriority } from "./classify";
+import { getStoreSettings, teamForCategory } from "@/lib/store/settings";
 
 /**
  * İş kuyruğu servisi (GÖREV 017).
@@ -66,6 +67,16 @@ const STATUS_ORDER: Record<string, string[]> = {
   REJECTED: ["DONE"],
   DONE: [],
 };
+
+function guessRequestType(text: string, types: Array<{ key: string; label: string }>): string {
+  const lower = text.toLocaleLowerCase("tr");
+  if (/ölçü|en[ib]?\s|boyu|boy\s/.test(lower) && types.some((type) => type.key === "measure_change")) return "measure_change";
+  if (/dikim|pile|ku[şs]ak|aksesuar|ponpon/.test(lower)) {
+    const sewing = types.find((type) => type.key === "sewing_change" || type.key === "accessory_add");
+    if (sewing) return sewing.key;
+  }
+  return types[0]?.key ?? "generic_action";
+}
 
 export async function ensureWorkItems(
   input: { storeId?: string; questionIds?: string[] },
@@ -151,13 +162,15 @@ export async function ensureWorkItems(
     };
 
     const result = classifyWork(classifyInput);
+    const settings = await getStoreSettings(store.id);
+    const requestTypeKey = result.category === "ACTION_REQUEST" ? guessRequestType(question.text, settings.requestTypes) : null;
 
     await prisma.workItem.create({
       data: {
         storeId: store.id,
         questionId: question.id,
         category: result.category,
-        team: result.team,
+        team: teamForCategory(settings, result.category) || result.team,
         priority: result.priority,
         reasons: result.reasons as unknown as object,
         orderNumber,
@@ -165,6 +178,7 @@ export async function ensureWorkItems(
         orderStatusAtClassify: order?.status ?? null,
         sources: (Array.isArray(draft?.contextSources) ? draft!.contextSources : []) as unknown as object,
         draftId: draft?.id ?? null,
+        requestTypeKey,
         events: {
           create: {
             action: "CREATED",
@@ -235,7 +249,7 @@ export interface WorkItemView {
   questionId: string;
   questionText: string;
   productName: string | null;
-  category: WorkCategory;
+  category: string;
   team: string;
   priority: WorkPriority;
   status: string;
@@ -258,12 +272,14 @@ export interface WorkItemView {
 }
 
 export async function listWorkItems(
+  storeId: string,
   filters: { category?: string; status?: string; priority?: string; team?: string; search?: string; limit?: number } = {},
   deps: WorkDeps = {},
 ): Promise<WorkItemView[]> {
   const prisma = deps.prisma ?? getPrisma();
   const rows = await prisma.workItem.findMany({
     where: {
+      storeId,
       ...(filters.category ? { category: filters.category as never } : {}),
       ...(filters.status ? { status: filters.status as never } : {}),
       ...(filters.priority ? { priority: filters.priority as never } : {}),
@@ -337,8 +353,8 @@ export async function listWorkItems(
     });
 }
 
-async function loadItem(prisma: PrismaClient, id: string) {
-  const item = await prisma.workItem.findUnique({ where: { id } });
+async function loadItem(prisma: PrismaClient, id: string, storeId: string) {
+  const item = await prisma.workItem.findFirst({ where: { id, storeId } });
   if (!item) throw new WorkError("NOT_FOUND", "İş kaydı bulunamadı.");
   return item;
 }
@@ -350,10 +366,10 @@ function assertTransition(from: string, to: string): void {
   }
 }
 
-export async function startWorkReview(input: { workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
+export async function startWorkReview(input: { storeId: string; workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
   const prisma = deps.prisma ?? getPrisma();
   const actor = requireActor(input.actor);
-  const item = await loadItem(prisma, input.workItemId);
+  const item = await loadItem(prisma, input.workItemId, input.storeId);
   assertTransition(item.status, "IN_REVIEW");
 
   return prisma.workItem.update({
@@ -367,12 +383,12 @@ export async function startWorkReview(input: { workItemId: string; actor: WorkAc
   });
 }
 
-export async function approveWorkItem(input: { workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
+export async function approveWorkItem(input: { storeId: string; workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
   const prisma = deps.prisma ?? getPrisma();
   const actor = requireActor(input.actor);
   assertRole(actor, ["ADMIN", "WORKSHOP"]);
 
-  const item = await loadItem(prisma, input.workItemId);
+  const item = await loadItem(prisma, input.workItemId, input.storeId);
   assertTransition(item.status, "APPROVED");
 
   const draftId = await createResultDraft(prisma, item, "APPROVED", actor);
@@ -389,12 +405,12 @@ export async function approveWorkItem(input: { workItemId: string; actor: WorkAc
   });
 }
 
-export async function rejectWorkItem(input: { workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
+export async function rejectWorkItem(input: { storeId: string; workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
   const prisma = deps.prisma ?? getPrisma();
   const actor = requireActor(input.actor);
   assertRole(actor, ["ADMIN", "WORKSHOP"]);
 
-  const item = await loadItem(prisma, input.workItemId);
+  const item = await loadItem(prisma, input.workItemId, input.storeId);
   assertTransition(item.status, "REJECTED");
 
   const draftId = await createResultDraft(prisma, item, "REJECTED", actor);
@@ -409,12 +425,12 @@ export async function rejectWorkItem(input: { workItemId: string; actor: WorkAct
   });
 }
 
-export async function completeWorkItem(input: { workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
+export async function completeWorkItem(input: { storeId: string; workItemId: string; actor: WorkActor; note?: string }, deps: WorkDeps = {}) {
   const prisma = deps.prisma ?? getPrisma();
   const actor = requireActor(input.actor);
   assertRole(actor, ["ADMIN", "WORKSHOP"]);
 
-  const item = await loadItem(prisma, input.workItemId);
+  const item = await loadItem(prisma, input.workItemId, input.storeId);
   assertTransition(item.status, "DONE");
 
   return prisma.workItem.update({
@@ -428,14 +444,14 @@ export async function completeWorkItem(input: { workItemId: string; actor: WorkA
 }
 
 export async function setProductionStage(
-  input: { workItemId: string; actor: WorkActor; stage: "NOT_STARTED" | "CUTTING" | "SEWING" | "PACKED" | "SHIPPED"; note?: string },
+  input: { storeId: string; workItemId: string; actor: WorkActor; stage: "NOT_STARTED" | "CUTTING" | "SEWING" | "PACKED" | "SHIPPED"; note?: string },
   deps: WorkDeps = {},
 ) {
   const prisma = deps.prisma ?? getPrisma();
   const actor = requireActor(input.actor);
   assertRole(actor, ["ADMIN", "WORKSHOP"]);
 
-  const item = await loadItem(prisma, input.workItemId);
+  const item = await loadItem(prisma, input.workItemId, input.storeId);
 
   return prisma.workItem.update({
     where: { id: item.id },
@@ -461,16 +477,16 @@ export interface WorkMetrics {
   averageResolutionMinutes: number | null;
 }
 
-export async function getWorkMetrics(deps: WorkDeps = {}): Promise<WorkMetrics> {
+export async function getWorkMetrics(storeId: string, deps: WorkDeps = {}): Promise<WorkMetrics> {
   const prisma = deps.prisma ?? getPrisma();
   const [total, autoCandidate, support, workshop, needsInfo, pending, closed] = await Promise.all([
-    prisma.workItem.count(),
-    prisma.workItem.count({ where: { category: "AUTO_CANDIDATE" } }),
-    prisma.workItem.count({ where: { category: "SUPPORT" } }),
-    prisma.workItem.count({ where: { category: "WORKSHOP" } }),
-    prisma.workItem.count({ where: { category: "NEEDS_INFO" } }),
-    prisma.workItem.count({ where: { status: { in: ["NEW", "IN_REVIEW", "APPROVED", "REJECTED"] } } }),
-    prisma.workItem.findMany({ where: { status: "DONE", closedAt: { not: null } }, select: { createdAt: true, closedAt: true } }),
+    prisma.workItem.count({ where: { storeId } }),
+    prisma.workItem.count({ where: { storeId, category: "AUTO_CANDIDATE" } }),
+    prisma.workItem.count({ where: { storeId, category: { in: ["SUPPORT", "HUMAN_REVIEW"] } } }),
+    prisma.workItem.count({ where: { storeId, category: { in: ["WORKSHOP", "ACTION_REQUEST"] } } }),
+    prisma.workItem.count({ where: { storeId, category: "NEEDS_INFO" } }),
+    prisma.workItem.count({ where: { storeId, status: { in: ["NEW", "IN_REVIEW", "APPROVED", "REJECTED"] } } }),
+    prisma.workItem.findMany({ where: { storeId, status: "DONE", closedAt: { not: null } }, select: { createdAt: true, closedAt: true } }),
   ]);
 
   const durations = closed

@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { requireUser } from "@/lib/auth/session";
+
 import { buildAutoFillPlan, summarizePlan } from "@/lib/products/autofill";
 import { getPrisma } from "@/lib/prisma";
 import { getWorkMetrics } from "@/lib/work-queue/service";
@@ -125,7 +127,8 @@ async function loadDashboard(storeId: string): Promise<DashboardData> {
 
 export default async function DashboardPage() {
   const prisma = getPrisma();
-  const store = await prisma.store.findFirst({ orderBy: { createdAt: "asc" } });
+  const currentUser = await requireUser();
+  const store = await prisma.store.findUnique({ where: { id: currentUser.storeId } });
 
   if (!store) {
     return (
@@ -137,7 +140,7 @@ export default async function DashboardPage() {
   }
 
   const data = await loadDashboard(store.id);
-  const work = await getWorkMetrics();
+  const work = await getWorkMetrics(store.id);
   const totalFieldSlots = Math.max(1, data.product.products * TOTAL_FIELDS);
 
   const stats = [

@@ -15,6 +15,7 @@ import {
   IconMenu,
   IconPolicy,
   IconQueue,
+  IconUser,
   IconRuler,
   IconSettings,
   IconSparkles,
@@ -52,7 +53,8 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
     items: [
       { label: "Geçmiş Cevaplar", href: "/answers", icon: IconHistory },
       { label: "Kalite ve Performans", href: "/quality", icon: IconChart },
-      { label: "Ayarlar", href: "/ayarlar", icon: IconSettings, soon: true },
+      { label: "Kullanıcılar", href: "/kullanicilar", icon: IconUser },
+      { label: "Mağaza Ayarları", href: "/ayarlar", icon: IconSettings },
     ],
   },
 ];
@@ -64,6 +66,8 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/orders": { title: "Siparişler", subtitle: "Sipariş arama ve ölçü değişikliği incelemesi" },
   "/change-requests": { title: "Ölçü Değişiklik Talepleri", subtitle: "Üretim onayı bekleyen ölçü talepleri" },
   "/product-bank": { title: "Ürün Bilgi Bankası", subtitle: "Katalogdan otomatik çıkarılan ürün bilgileri" },
+  "/kullanicilar": { title: "Kullanıcılar", subtitle: "Mağaza kullanıcıları ve roller" },
+  "/ayarlar": { title: "Mağaza Ayarları", subtitle: "İş akışı, işlem türleri, sipariş kuralı ve modüller" },
   "/work-queue": { title: "İş Kuyruğu", subtitle: "Soruları sınıflandır, ekibe yönlendir, sonuçlandır" },
   "/policies": { title: "Mağaza Politikaları", subtitle: "Ürün bilgisinden ayrı işletme kuralları (özel ölçü, dikim, fiyat)" },
   "/answers": { title: "Geçmiş Cevaplar", subtitle: "Geçmiş satıcı cevaplarının inceleme durumu" },
@@ -74,7 +78,28 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
  * Panel kabuğu: sabit sol menü, üst bar, tema anahtarı ve mobil çekmece.
  * Yalnızca yerleşim ve gezinme sağlar; hiçbir veri işlemi yapmaz.
  */
-export function PanelChrome({ pendingBadge, children }: { pendingBadge?: number; children: React.ReactNode }) {
+interface ChromeUser {
+  name: string | null;
+  email: string;
+  role: string;
+  storeName: string | null;
+}
+
+const ROLE_TR: Record<string, string> = {
+  OWNER: "Mağaza sahibi",
+  ADMIN: "Yönetici",
+  SUPPORT: "Müşteri temsilcisi",
+};
+
+export function PanelChrome({
+  pendingBadge,
+  user,
+  children,
+}: {
+  pendingBadge?: number;
+  user?: ChromeUser | null;
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -134,6 +159,18 @@ export function PanelChrome({ pendingBadge, children }: { pendingBadge?: number;
         </div>
         {nav}
         <div className="border-t border-line px-5 py-4 text-[11px] leading-relaxed text-subtle">
+          {user ? (
+            <div className="mb-3">
+              <p className="text-[12px] font-medium text-ink">{user.name ?? user.email}</p>
+              <p>
+                {ROLE_TR[user.role] ?? user.role}
+                {user.storeName ? ` · ${user.storeName}` : ""}
+              </p>
+              <a href="/api/giris?cikis=1" className="mt-1 inline-block text-brand-600 hover:underline">
+                Çıkış yap
+              </a>
+            </div>
+          ) : null}
           Salt okunur mod. Trendyol'a cevap gönderilmez, sipariş değiştirilmez.
         </div>
       </aside>

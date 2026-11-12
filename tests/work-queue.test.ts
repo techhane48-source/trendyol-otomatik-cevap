@@ -74,8 +74,8 @@ describe("GÖREV 017 — sınıflandırma", () => {
   it("iade sorusu müşteri temsilcisine URGENT gider", async () => {
     const q = await makeQuestion("Ürünü iade etmek istiyorum, param ne zaman hesabıma geçer?");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: q.text.slice(0, 12) });
-    expect(item.category).toBe("SUPPORT");
+    const [item] = await listWorkItems(storeId, { search: q.text.slice(0, 12) });
+    expect(item.category).toBe("HUMAN_REVIEW");
     expect(item.team).toBe("Müşteri Temsilcisi");
     expect(item.priority).toBe("URGENT");
   });
@@ -83,8 +83,8 @@ describe("GÖREV 017 — sınıflandırma", () => {
   it("teslimat itirazı otomatik çözüldü sayılmaz", async () => {
     const q = await makeQuestion("Kargom 5 gündür gelmedi, nerede?");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: "Kargom 5 gündür" });
-    expect(item.category).toBe("SUPPORT");
+    const [item] = await listWorkItems(storeId, { search: "Kargom 5 gündür" });
+    expect(item.category).toBe("HUMAN_REVIEW");
     expect(item.priority).toBe("HIGH");
   });
 
@@ -92,8 +92,8 @@ describe("GÖREV 017 — sınıflandırma", () => {
     await makeOrder("777000001", "Cancelled");
     const q = await makeQuestion("777000001 numaralı siparişimin ölçüsünü değiştirmek istiyorum, eni 200 olsun");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: "777000001" });
-    expect(item.category).toBe("SUPPORT");
+    const [item] = await listWorkItems(storeId, { search: "777000001" });
+    expect(item.category).toBe("HUMAN_REVIEW");
     expect(item.orderStatusAtClassify).toBe("Cancelled");
     expect(item.reasons.join(" ")).toContain("iptal");
   });
@@ -102,9 +102,9 @@ describe("GÖREV 017 — sınıflandırma", () => {
     await makeOrder("777000002", "Picking");
     const q = await makeQuestion("777000002 siparişimde eni 180 boyu 250 olsun, değiştirebilir misiniz?");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: "777000002" });
-    expect(item.category).toBe("WORKSHOP");
-    expect(item.team).toBe("Atölye");
+    const [item] = await listWorkItems(storeId, { search: "777000002" });
+    expect(item.category).toBe("ACTION_REQUEST");
+    expect(item.team).toBe("İşlem Ekibi");
     expect(item.priority).toBe("HIGH");
   });
 
@@ -133,11 +133,11 @@ describe("GÖREV 017 — yetki ve iş akışı", () => {
   it("atölye onayı olmadan müşteriye onay metni üretilmez; SUPPORT rolü onay veremez", async () => {
     const q = await makeQuestion("Ölçü değişikliği talebim onaylandı mı?");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: q.text.slice(0, 12) });
+    const [item] = await listWorkItems(storeId, { search: q.text.slice(0, 12) });
 
-    await expect(approveWorkItem({ workItemId: item.id, actor: support })).rejects.toBeInstanceOf(WorkAccessError);
+    await expect(approveWorkItem({ storeId, workItemId: item.id, actor: support })).rejects.toBeInstanceOf(WorkAccessError);
     // NEW durumundan doğrudan onay da geçersizdir.
-    await expect(approveWorkItem({ workItemId: item.id, actor: admin })).rejects.toBeInstanceOf(WorkError);
+    await expect(approveWorkItem({ storeId, workItemId: item.id, actor: admin })).rejects.toBeInstanceOf(WorkError);
 
     const fresh = await prisma.workItem.findUniqueOrThrow({ where: { id: item.id } });
     expect(fresh.status).toBe("NEW");
@@ -147,10 +147,10 @@ describe("GÖREV 017 — yetki ve iş akışı", () => {
     await makeOrder("777000003", "Picking");
     const q = await makeQuestion("777000003 siparişimde boyu 240 olsun");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: "777000003" });
+    const [item] = await listWorkItems(storeId, { search: "777000003" });
 
-    await startWorkReview({ workItemId: item.id, actor: workshop });
-    const approved = await approveWorkItem({ workItemId: item.id, actor: workshop });
+    await startWorkReview({ storeId, workItemId: item.id, actor: workshop });
+    const approved = await approveWorkItem({ storeId, workItemId: item.id, actor: workshop });
     expect(approved.status).toBe("APPROVED");
     expect(approved.closedAt).toBeNull();
 
@@ -158,7 +158,7 @@ describe("GÖREV 017 — yetki ve iş akışı", () => {
     expect(draft.text).toContain("onaylanmıştır");
     expect(draft.status).toBe("PENDING"); // gönderilmez: yalnızca taslak
 
-    const done = await completeWorkItem({ workItemId: item.id, actor: workshop });
+    const done = await completeWorkItem({ storeId, workItemId: item.id, actor: workshop });
     expect(done.status).toBe("DONE");
     expect(done.closedAt).not.toBeNull();
   });
@@ -166,9 +166,9 @@ describe("GÖREV 017 — yetki ve iş akışı", () => {
   it("red işlemi farklı bir taslak metni üretir ve onayla karışmaz", async () => {
     const q = await makeQuestion("777000004 siparişimin ölçüsünü değiştirin");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: "777000004" });
-    await startWorkReview({ workItemId: item.id, actor: admin });
-    const rejected = await rejectWorkItem({ workItemId: item.id, actor: admin });
+    const [item] = await listWorkItems(storeId, { search: "777000004" });
+    await startWorkReview({ storeId, workItemId: item.id, actor: admin });
+    const rejected = await rejectWorkItem({ storeId, workItemId: item.id, actor: admin });
     const draft = await prisma.answerDraft.findUniqueOrThrow({ where: { id: rejected.draftId! } });
     expect(draft.text).toContain("gerçekleştirilememektedir");
     expect(draft.text).not.toContain("onaylanmıştır");
@@ -177,25 +177,25 @@ describe("GÖREV 017 — yetki ve iş akışı", () => {
   it("üretim aşaması elle işaretlenir ve Trendyol durumundan türetilmez", async () => {
     const q = await makeQuestion("Kesim başladı mı?");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: q.text.slice(0, 12) });
+    const [item] = await listWorkItems(storeId, { search: q.text.slice(0, 12) });
     expect(item.productionStage).toBeNull();
 
-    await setProductionStage({ workItemId: item.id, actor: workshop, stage: "CUTTING" });
+    await setProductionStage({ storeId, workItemId: item.id, actor: workshop, stage: "CUTTING" });
     const fresh = await prisma.workItem.findUniqueOrThrow({ where: { id: item.id } });
     expect(fresh.productionStage).toBe("CUTTING");
     expect(fresh.productionStageBy).toBe("test-atolye");
   });
 
   it("ortalama çözüm süresi yalnızca kapanmış kayıtlardan hesaplanır", async () => {
-    const before = await getWorkMetrics();
+    const before = await getWorkMetrics(storeId);
     const q = await makeQuestion("Süre testi sorusu 999000111");
     await ensureWorkItems({ storeId, questionIds: [q.id] });
-    const [item] = await listWorkItems({ search: "999000111" });
-    await startWorkReview({ workItemId: item.id, actor: admin });
-    await approveWorkItem({ workItemId: item.id, actor: admin });
-    await completeWorkItem({ workItemId: item.id, actor: admin });
+    const [item] = await listWorkItems(storeId, { search: "999000111" });
+    await startWorkReview({ storeId, workItemId: item.id, actor: admin });
+    await approveWorkItem({ storeId, workItemId: item.id, actor: admin });
+    await completeWorkItem({ storeId, workItemId: item.id, actor: admin });
 
-    const after = await getWorkMetrics();
+    const after = await getWorkMetrics(storeId);
     expect(after.completed).toBe(before.completed + 1);
     expect(after.averageResolutionMinutes).not.toBeNull();
     expect(after.averageResolutionMinutes!).toBeGreaterThanOrEqual(0);

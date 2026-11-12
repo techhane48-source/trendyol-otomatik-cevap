@@ -1,9 +1,9 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/session";
+import { getStoreSettings } from "@/lib/store/settings";
 import { getWorkMetrics, listWorkItems } from "@/lib/work-queue/service";
-import { CATEGORY_LABELS, PRIORITY_LABELS, STAGE_LABELS, STATUS_LABELS } from "@/lib/work-queue/classify";
+import { PRIORITY_LABELS, STAGE_LABELS, STATUS_LABELS } from "@/lib/work-queue/classify";
 import { approveAction, completeAction, ensureQueueAction, rejectAction, stageAction, startReviewAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -26,14 +26,33 @@ export default async function WorkQueuePage({
 }: {
   searchParams: Promise<{ category?: string; status?: string; priority?: string; team?: string; q?: string }>;
 }) {
-  const store = await cookies();
-  if (!checkAccess(store.get(ACCESS_COOKIE_NAME)?.value)) redirect("/giris");
+  const user = await requireUser();
+  const settings = await getStoreSettings(user.storeId);
+
+  if (!settings.modules.workQueue) {
+    return (
+      <div className="panel-card">
+        <h2 className="panel-title mb-2">İş kuyruğu kapalı</h2>
+        <p className="panel-muted">Bu modül mağaza ayarlarından kapatılmış. Açmak için yöneticiye başvurun.</p>
+      </div>
+    );
+  }
 
   const params = await searchParams;
   const [items, metrics] = await Promise.all([
-    listWorkItems({ category: params.category, status: params.status, priority: params.priority, team: params.team, search: params.q }),
-    getWorkMetrics(),
+    listWorkItems(user.storeId, {
+      category: params.category,
+      status: params.status,
+      priority: params.priority,
+      team: params.team,
+      search: params.q,
+    }),
+    getWorkMetrics(user.storeId),
   ]);
+
+  const labelOf = (category: string) =>
+    settings.workflow.find((entry) => entry.category === category)?.label ??
+    (category === "SUPPORT" ? "İnsan incelemesi" : category === "WORKSHOP" ? "İşlem talebi" : category);
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -42,7 +61,8 @@ export default async function WorkQueuePage({
           <div>
             <h2 style={{ margin: 0, fontSize: 16 }}>Akıllı iş kuyruğu</h2>
             <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
-              Sorular açıklanabilir kurallarla sınıflandırılır. Onay/ret yalnızca yetkili rolle yapılır; AI kendi kendine onay veremez.
+              {user.storeName ?? "Mağaza"} · Sorular mağazanın kategori yapılandırmasına göre sınıflandırılır. Onay/ret
+              yalnızca yetkili rolle yapılır; AI kendi kendine onay veremez.
             </p>
           </div>
           <form action={ensureQueueAction}>
@@ -57,8 +77,8 @@ export default async function WorkQueuePage({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
           <Metric label="Toplam soru" value={metrics.total} />
           <Metric label="Otomatik aday" value={metrics.autoCandidate} />
-          <Metric label="Temsilci" value={metrics.support} />
-          <Metric label="Atölye" value={metrics.workshop} />
+          <Metric label="İnsan incelemesi" value={metrics.support} />
+          <Metric label="İşlem talebi" value={metrics.workshop} />
           <Metric label="Bilgi eksik" value={metrics.needsInfo} />
           <Metric label="Bekleyen iş" value={metrics.pending} />
           <Metric label="Tamamlanan" value={metrics.completed} />
@@ -72,9 +92,9 @@ export default async function WorkQueuePage({
           <input name="q" placeholder="Ara: soru, ürün, sipariş no" defaultValue={params.q ?? ""} style={{ minWidth: 240 }} />
           <select name="category" defaultValue={params.category ?? ""}>
             <option value="">Tüm kategoriler</option>
-            {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
+            {settings.workflow.map((entry) => (
+              <option key={entry.category} value={entry.category}>
+                {entry.label}
               </option>
             ))}
           </select>
@@ -96,9 +116,11 @@ export default async function WorkQueuePage({
           </select>
           <select name="team" defaultValue={params.team ?? ""}>
             <option value="">Tüm ekipler</option>
-            <option value="AI">AI</option>
-            <option value="Müşteri Temsilcisi">Müşteri Temsilcisi</option>
-            <option value="Atölye">Atölye</option>
+            {[...new Set(settings.workflow.map((entry) => entry.team))].map((team) => (
+              <option key={team} value={team}>
+                {team}
+              </option>
+            ))}
           </select>
           <button type="submit" className="btn">
             Filtrele
@@ -108,9 +130,7 @@ export default async function WorkQueuePage({
 
       {items.length === 0 ? (
         <div className="card">
-          <p style={{ margin: 0 }}>
-            Kayıt yok. “Kuyruğu yenile” ile mevcut sorulardan iş kayıtları oluşturun.
-          </p>
+          <p style={{ margin: 0 }}>Kayıt yok. “Kuyruğu yenile” ile mevcut sorulardan iş kayıtları oluşturun.</p>
         </div>
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
@@ -123,7 +143,7 @@ export default async function WorkQueuePage({
                   {item.orderStatusAtClassify ? ` · ${item.orderStatusAtClassify}` : ""}
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <span className="badge">{CATEGORY_LABELS[item.category]}</span>
+                  <span className="badge">{labelOf(item.category)}</span>
                   <span className="badge">{item.team}</span>
                   <span className={PRIORITY_BADGE[item.priority] ?? "badge"}>{PRIORITY_LABELS[item.priority]}</span>
                   <span className="badge">{STATUS_LABELS[item.status] ?? item.status}</span>
@@ -174,7 +194,9 @@ export default async function WorkQueuePage({
               {item.sources.length > 0 ? (
                 <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
                   Kaynaklar:{" "}
-                  {item.sources.map((source) => `${source.label}${source.at ? ` (${dateFormatter.format(new Date(source.at))})` : ""}`).join(" | ")}
+                  {item.sources
+                    .map((source) => `${source.label}${source.at ? ` (${dateFormatter.format(new Date(source.at))})` : ""}`)
+                    .join(" | ")}
                 </p>
               ) : null}
 
@@ -214,7 +236,7 @@ export default async function WorkQueuePage({
                   </form>
                 ) : null}
 
-                {item.team === "Atölye" ? (
+                {item.category === "ACTION_REQUEST" || item.category === "WORKSHOP" ? (
                   <form action={stageAction} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <input type="hidden" name="id" value={item.id} />
                     <select name="stage" defaultValue={item.productionStage ?? "NOT_STARTED"}>
@@ -258,9 +280,8 @@ export default async function WorkQueuePage({
       )}
 
       <div className="card muted" style={{ fontSize: 12 }}>
-        Yetkilendirme notu: bu sürümde gerçek kullanıcı/rol altyapısı yok. Panel tek paylaşımlı anahtarla açılıyor ve
-        oturum ADMIN sayılıyor; atölye onayı servis katmanında rol kontrolünden geçiyor (SUPPORT rolü onay veremez).
-        Çok kullanıcılı rol yönetimi bir sonraki adımdır.
+        Yetkilendirme: OWNER/ADMIN onay ve üretim aşaması değiştirebilir; SUPPORT yalnızca incelemeye alabilir. Tüm
+        işlemler mağaza kapsamında ve işlem geçmişinde kayıtlıdır.
       </div>
     </div>
   );

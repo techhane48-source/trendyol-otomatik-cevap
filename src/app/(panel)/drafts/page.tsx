@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getDraftHistory, listQuestionsForDrafting, toDraftView, type DraftView } from "@/lib/drafts/service";
 import { STRATEGY_LABELS } from "@/lib/intents/taxonomy";
@@ -102,6 +103,7 @@ export default async function DraftsPage({
 }: {
   searchParams: Promise<{ hata?: string; ok?: string }>;
 }) {
+  const user = await requireUser();
   const cookieStore = await cookies();
   const access = checkAccess(cookieStore.get(ACCESS_COOKIE_NAME)?.value ?? null);
 
@@ -135,7 +137,7 @@ export default async function DraftsPage({
   let loadError: string | null = null;
 
   try {
-    rows = await listQuestionsForDrafting({ limit: 25 });
+    rows = await listQuestionsForDrafting(user.storeId, { limit: 25 });
   } catch (error) {
     log.error("Taslak paneli yüklenemedi", { error });
     loadError = "Sorular yüklenemedi. Veritabanı bağlantısını kontrol edin.";

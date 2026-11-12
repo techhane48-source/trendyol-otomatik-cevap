@@ -1,4 +1,6 @@
 import Link from "next/link";
+
+import { requireUser } from "@/lib/auth/session";
 import { cookies } from "next/headers";
 
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
@@ -74,7 +76,8 @@ export default async function ProductBankPage({
 
   const params = await searchParams;
   const prisma = getPrisma();
-  const store = await prisma.store.findFirst({ orderBy: { createdAt: "asc" } });
+  const currentUser = await requireUser();
+  const store = await prisma.store.findUnique({ where: { id: currentUser.storeId } });
 
   if (!access.ok || !store) {
     return (

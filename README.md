@@ -1185,3 +1185,71 @@ Test: **420 test / 24 dosya**, typecheck 0, build 0.
 - **Gerçek kullanıcı/rol altyapısı yok.** Panel tek paylaşımlı anahtarla açılıyor ve oturum `ADMIN` sayılıyor; rol kontrolü servis katmanında çalışıyor. Çok kullanıcılı kimlik doğrulama bir sonraki adım.
 - Otomatik cevap adayı = "gönderilebilir" değil; mevcut manuel onay korunuyor.
 - İade/para hareketi banka verisi olmadığı için hiçbir zaman "hesabınıza geçti" denmiyor.
+
+## GÖREV 018 — Çok mağazalı SaaS ve yapılandırılabilir iş akışı
+
+**Branch:** `task-018-saas-altyapisi` (başlangıç `5292d2f`)
+
+### Veri modeli
+
+| Tablo | Amaç |
+|---|---|
+| `users` | Mağaza kullanıcısı: `email`, bcrypt `passwordHash`, `role` (OWNER/ADMIN/SUPPORT), `active` |
+| `sessions` | Oturum: yalnızca **SHA-256 token özeti**, `expiresAt` (7 gün), `lastSeenAt` (12 saat hareketsizlik) |
+| `login_attempts` | Giriş denemesi: e-posta **özeti** + başarı/hata; 15 dakikada 5 hata → kilit |
+| `store_settings` | Mağaza başına `workflow`, `requestTypes`, `orderRules`, `modules` |
+| `work_items.requestTypeKey` | Mağazanın işlem türü anahtarı (ör. `measure_change`) |
+
+Kategori enum'u `AUTO_CANDIDATE / HUMAN_REVIEW / ACTION_REQUEST / NEEDS_INFO` olarak genişletildi; eski `SUPPORT` → `HUMAN_REVIEW`, `WORKSHOP` → `ACTION_REQUEST` taşındı (veri silinmedi).
+
+### Roller ve oturum
+
+- `OWNER` ve `ADMIN`: kullanıcı ekleme, rol/şifre değiştirme, mağaza ayarları, iş onayı.
+- `SUPPORT`: soruları incelemeye alabilir; onay/ret/tamamlama ve üretim aşaması değiştiremez.
+- Son `OWNER` rolü düşürülemez veya kapatılamaz.
+- Şifre politikası: en az 10 karakter, harf + rakam. Şifre değişince kullanıcının oturumları kapanır.
+- İlk kurulum: `/kurulum` (yalnızca hiç kullanıcı yokken; yerelden veya eski anahtarla).
+
+### Mağaza izolasyonu
+
+- `ensureWorkItems`, `listWorkItems(storeId, …)`, `getWorkMetrics(storeId)`, `listQuestionsForDrafting(storeId, …)`, `getPolicyContext({ storeId })` mağaza parametresi zorunlu.
+- Panel sayfaları `requireUser()` üzerinden oturumdaki mağazayı kullanır; başka mağazanın kayıt ID'si bilinse bile `NOT_FOUND` döner.
+- `ensureWorkItems` yalnızca kendi mağazasının sorularını görür; alt kayıtlar `storeId` ile filtrelenir.
+
+### Yapılandırılabilir iş akışı
+
+- Çekirdekte sabit sektör terimi yok: kategori etiketleri ve sorumlu ekip `store_settings.workflow` içinde.
+- Varsayılanlar: Otomatik cevap adayı · İnsan incelemesi · İşlem talebi · Bilgi eksik.
+- Mağaza kendi işlem türlerini tanımlar (`requestTypes`, ör. `measure_change|Ölçü değişikliği`).
+- Aura Perde: `measure_change`, `sewing_change`, `accessory_add` — yalnızca o mağazanın kaydında.
+
+### Sipariş kuralı (mağaza bazlı)
+
+`orderRules.changeRequest = { allowedStatuses, blockedStatuses, unknown }`. Aura için `allowed=[Created]`, `blocked=[Picking, Invoiced, Shipped, Delivered, Cancelled, Returned, UnSupplied]`, tanımsız → `HUMAN_REVIEW`. Kural yoksa (diğer mağazalar) genel davranış korunur; kural **talep anında** canlı sipariş durumuyla yeniden değerlendirilir. Talep açma, kabul ve tamamlama ayrı durumlar olarak kalır.
+
+### Panel
+
+- `/kullanicilar`: kullanıcı listesi, ekleme, rol/aktif değişimi, şifre sıfırlama (OWNER/ADMIN).
+- `/ayarlar`: modül anahtarları, kategori etiket/ekip, işlem türleri, sipariş kuralı.
+- `/work-queue`: etiketler mağaza yapılandırmasından; modül kapalıysa sayfa bilgi verir.
+- Oturum bilgisi ve çıkış kenar çubuğunda.
+
+### Geçiş planı (mevcut erişimi kesmeden)
+
+1. Migration'lar uygulanır; mevcut mağaza/soru/politika/iş kayıtları korunur, kategoriler yeni değerlere taşınır, her mağazaya varsayılan `store_settings` yazılır.
+2. `/kurulum` ile ilk OWNER oluşturulur (tek seferlik).
+3. Kullanıcılar `/kullanicilar` üzerinden eklenir; herkes kendi e-postasıyla giriş yapar.
+4. **Geçiş döneminde** eski `APP_ACCESS_TOKEN` çalışmaya devam eder (ilk mağazanın ADMIN'i sayılır) — kimse dışarıda kalmaz.
+5. Tüm kullanıcılar geçtikten sonra `APP_ACCESS_TOKEN` `.env`'den kaldırılır; anahtar yolu kendiliğinden kapanır (fail-closed). Bu adım bu görevde **yapılmadı**.
+
+### Testler
+
+`tests/saas-isolation.test.ts` — 13 test: bcrypt doğrulama, hatalı şifre + hız sınırı, SUPPORT'un yönetici işlemi yapamaması, mağaza bazlı kullanıcı/soru/politika/iş kaydı izolasyonu, başka mağaza ID'siyle erişim reddi, kategori etiketlerinin mağazaya özel olması, Aura kuralının yalnızca Aura'da uygulanması, migration backfill ve eski kategori kalmaması.
+
+Toplam: **444 test / 26 dosya**, `tsc` 0, build 0.
+
+### Sınırlar
+
+- Modül anahtarları menüde fiilen gizlenmiyor (yalnızca iş kuyruğu sayfası kapanıyor); diğer modüllerin gizlenmesi sonraki adım.
+- Kullanıcı bazlı `session` iptali toplu (tek tek cihaz listesi yok).
+- Trendyol'a yazma yok; sipariş değiştiren API çağrısı yok.
