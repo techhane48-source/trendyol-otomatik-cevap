@@ -14,6 +14,7 @@ import {
   IconHistory,
   IconMenu,
   IconPolicy,
+  IconQueue,
   IconRuler,
   IconSettings,
   IconSparkles,
@@ -40,6 +41,7 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
     title: "Operasyon",
     items: [
       { label: "Siparişler", href: "/orders", icon: IconBox },
+      { label: "İş Kuyruğu", href: "/work-queue", icon: IconQueue },
       { label: "Ölçü Değişiklik Talepleri", href: "/change-requests", icon: IconRuler },
       { label: "Ürün Bilgi Bankası", href: "/product-bank", icon: IconDatabase },
       { label: "Mağaza Politikaları", href: "/policies", icon: IconPolicy },
@@ -62,6 +64,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/orders": { title: "Siparişler", subtitle: "Sipariş arama ve ölçü değişikliği incelemesi" },
   "/change-requests": { title: "Ölçü Değişiklik Talepleri", subtitle: "Üretim onayı bekleyen ölçü talepleri" },
   "/product-bank": { title: "Ürün Bilgi Bankası", subtitle: "Katalogdan otomatik çıkarılan ürün bilgileri" },
+  "/work-queue": { title: "İş Kuyruğu", subtitle: "Soruları sınıflandır, ekibe yönlendir, sonuçlandır" },
   "/policies": { title: "Mağaza Politikaları", subtitle: "Ürün bilgisinden ayrı işletme kuralları (özel ölçü, dikim, fiyat)" },
   "/answers": { title: "Geçmiş Cevaplar", subtitle: "Geçmiş satıcı cevaplarının inceleme durumu" },
   "/quality": { title: "Kalite ve Performans", subtitle: "AI kalite ölçümleri ve maliyet" },

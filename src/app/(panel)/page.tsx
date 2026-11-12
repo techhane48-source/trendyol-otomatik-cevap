@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { buildAutoFillPlan, summarizePlan } from "@/lib/products/autofill";
 import { getPrisma } from "@/lib/prisma";
+import { getWorkMetrics } from "@/lib/work-queue/service";
 
 export const dynamic = "force-dynamic";
 
@@ -136,6 +137,7 @@ export default async function DashboardPage() {
   }
 
   const data = await loadDashboard(store.id);
+  const work = await getWorkMetrics();
   const totalFieldSlots = Math.max(1, data.product.products * TOTAL_FIELDS);
 
   const stats = [
@@ -176,6 +178,32 @@ export default async function DashboardPage() {
           </Link>
         ))}
       </div>
+
+      <section className="panel-card">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="panel-title">İş kuyruğu</h2>
+          <Link href="/work-queue" className="text-sm text-brand-600 hover:underline">
+            Kuyruğu aç
+          </Link>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MiniStat label="Otomatik cevap adayı" value={work.autoCandidate} tone="ok" />
+          <MiniStat label="Müşteri temsilcisi" value={work.support} tone="warn" />
+          <MiniStat label="Atölye talebi" value={work.workshop} tone="info" />
+          <MiniStat label="Bilgi eksik" value={work.needsInfo} tone="muted" />
+          <MiniStat label="Bekleyen iş" value={work.pending} tone="warn" />
+          <MiniStat label="Tamamlanan iş" value={work.completed} tone="ok" />
+          <MiniStat
+            label="Ortalama çözüm süresi"
+            value={work.averageResolutionMinutes === null ? 0 : work.averageResolutionMinutes}
+            tone="info"
+          />
+          <MiniStat label="Toplam iş kaydı" value={work.total} tone="muted" />
+        </div>
+        <p className="mt-3 text-xs text-subtle">
+          Ortalama çözüm süresi yalnızca kapanmış (tamamlanan) kayıtlardan hesaplanır; birimi dakikadır.
+        </p>
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <section className="panel-card lg:col-span-2">

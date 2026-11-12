@@ -663,3 +663,96 @@ model CatalogProduct {
   @@index([storeId])
   @@map("catalog_products")
 }
+
+// ---------------- GÖREV 017: akıllı iş kuyruğu ----------------
+
+enum WorkCategory {
+  AUTO_CANDIDATE
+  SUPPORT
+  WORKSHOP
+  NEEDS_INFO
+}
+
+enum WorkStatus {
+  NEW
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  DONE
+}
+
+enum WorkPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ProductionStage {
+  NOT_STARTED
+  CUTTING
+  SEWING
+  PACKED
+  SHIPPED
+}
+
+/// Bir müşteri sorusunun operasyon karşılığı. Soru başına tek kayıt (idempotent).
+model WorkItem {
+  id         String  @id @default(cuid())
+  storeId    String
+  questionId String  @unique
+
+  category WorkCategory
+  /// Sorumlu ekip: "AI" | "Müşteri Temsilcisi" | "Atölye"
+  team     String
+  priority WorkPriority @default(NORMAL)
+  status   WorkStatus   @default(NEW)
+
+  /// Sınıflandırma gerekçeleri (açıklanabilir kurallar)
+  reasons Json?
+  /// Sipariş numarası (varsa; panelde yalnızca yetkili oturuma gösterilir)
+  orderNumber String?
+  /// MATCHED | MISMATCH | UNVERIFIED | NOT_FOUND | UNAVAILABLE
+  orderMatch  String?
+  /// Siparişin sınıflandırma anındaki Trendyol durumu
+  orderStatusAtClassify String?
+  /// Kullanılan bilgi kaynakları [{ type,label,at }]
+  sources Json?
+  /// AI taslağı (varsa)
+  draftId String?
+
+  assignedTo String?
+
+  /// Atölye üretim aşaması — Trendyol durumundan TAHMİN EDİLMEZ, elle işaretlenir.
+  productionStage   ProductionStage?
+  productionStageAt DateTime?
+  productionStageBy String?
+
+  firstReviewAt DateTime?
+  closedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events WorkItemEvent[]
+
+  @@index([storeId, status])
+  @@index([storeId, category])
+  @@index([storeId, priority])
+  @@map("work_items")
+}
+
+model WorkItemEvent {
+  id         String   @id @default(cuid())
+  workItemId String
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  /// CREATED | START_REVIEW | APPROVED | REJECTED | COMPLETED | STAGE_CHANGED
+  action     String
+  actor      String
+  role       String
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([workItemId, createdAt])
+  @@map("work_item_events")
+}

@@ -1130,3 +1130,58 @@ Kaynak: `GET /integration/order/sellers/{sellerId}/orders?orderNumber=…` (Orde
 ANSWERED düşüşü bilinçli: canlı veri olmadan verilen politika cevapları artık "çözüldü" sayılmıyor; karşılığında 4 soru gerçek sipariş verisiyle yanıtlandı (biri teslim edildi, biri hazırlanıyor, ikisi iptal).
 
 Test: **420 test / 24 dosya**, typecheck 0, build 0.
+
+## GÖREV 017 — Akıllı müşteri hizmetleri iş kuyruğu
+
+**Branch:** `task-017-akilli-is-kuyrugu` (başlangıç `6b53aa1`)
+
+### Sınıflandırma (açıklanabilir, AI puanı yok)
+
+`src/lib/work-queue/classify.ts` sıralı kurallarla çalışır; her kayıt gerekçe listesi (`reasons`) taşır:
+
+| Sıra | Kural | Kategori | Öncelik |
+|---|---|---|---|
+| 1 | Sipariş Trendyol'da **iptal** | Müşteri Temsilcisi | Acil |
+| 2 | İade / ücret iadesi ifadesi | Müşteri Temsilcisi | Acil |
+| 3 | Teslimat / gecikme / "kargoya ne zaman verilir" | Müşteri Temsilcisi | Yüksek |
+| 4 | Fiyat / kampanya anlaşmazlığı | Müşteri Temsilcisi | Normal |
+| 5 | Ölçü, dikim, kuşak/aksesuar, üretim değişikliği | Atölye | Üretim başlamamışsa Yüksek, aksi Normal |
+| 6 | Doğrulanmış bilgiyle cevaplanmış ürün sorusu | Otomatik cevap adayı | Düşük |
+| 7 | Kalan | Bilgi eksik | Normal |
+
+- "Üretim başlamamış" bilgisi **Trendyol sipariş durumundan** okunur (Created/Awaiting/Picking/Invoiced), atölye aşamasından değil.
+- Doğrulanmış ürün alanı ve politika sayısı taslaktan değil, bilgi bankasından (`ProductInfo VERIFIED`, `StorePolicy verified`) sayılır.
+- Aynı soru tek iş kaydı üretir (`questionId` unique + `ensureWorkItems` idempotent).
+
+### İş akışı ve yetki
+
+`YENİ → İNCELEMEDE → ONAYLANDI / REDDEDİLDİ → TAMAMLANDI`
+
+- Onay, ret, tamamlama ve üretim aşaması değişikliği `ADMIN` veya `WORKSHOP` rolü ister; `SUPPORT` rolü `WorkAccessError` alır.
+- `WORK_QUEUE_WORKSHOP_ACTORS` ortam değişkeni doluysa yalnızca listedeki isimler atölye onayı verebilir.
+- Durum geçişleri matrisle korunur: `YENİ`den doğrudan onay `INVALID_TRANSITION` hatası verir.
+- Onay/ret sonrası **yeni cevap taslağı** üretilir (şablon, `PENDING`); gönderim yoktur — Trendyol'a POST edilmez.
+- Atölye üretim aşaması (kesim başlamadı/kesimde/dikimde/paketlendi/kargoda) **elle** işaretlenir; Trendyol durumundan türetilmez.
+- Her işlem `work_item_events` tablosuna aktör, rol, not ve zamanla yazılır.
+
+### Panel
+
+- `/work-queue`: kategori/durum/öncelik/ekip filtreleri, metin araması, gerekçe, AI taslağı, kaynaklar ve zamanları, işlem geçmişi, aksiyon butonları.
+- Genel Bakış'a iş kuyruğu metrikleri eklendi: toplam, otomatik aday, temsilci, atölye, bilgi eksik, bekleyen, tamamlanan, **ortalama çözüm süresi (yalnızca kapanmış kayıtlardan, dakika)**.
+
+### 30 gerçek sorunun dağılımı (eval `g017`)
+
+| Kategori | Adet | Sorular |
+|---|---|---|
+| Otomatik cevap adayı | 7 | #1, #2, #5, #10, #19, #21, #27 |
+| Müşteri temsilcisi | 8 | #6, #7, #13, #15, #18, #23, #29, #30 |
+| Atölye | 4 | #3, #4, #12, #17 |
+| Bilgi eksik | 11 | #8, #9, #11, #14, #16, #20, #22, #24, #25, #26, #28 |
+
+Öne çıkanlar: #29/#30 iptal edilmiş sipariş olduğu için atölyeye değil temsilciye düştü; #17 (kuşak talebi, üretim başlamamış) atölyeye **Yüksek** öncelikle gitti; #4 çoklu ölçü talebi tek kayıt olarak atölyeye düştü (değişiklik akışı çoklu talebi ayrıca reddeder).
+
+### Sınırlar (dürüst notlar)
+
+- **Gerçek kullanıcı/rol altyapısı yok.** Panel tek paylaşımlı anahtarla açılıyor ve oturum `ADMIN` sayılıyor; rol kontrolü servis katmanında çalışıyor. Çok kullanıcılı kimlik doğrulama bir sonraki adım.
+- Otomatik cevap adayı = "gönderilebilir" değil; mevcut manuel onay korunuyor.
+- İade/para hareketi banka verisi olmadığı için hiçbir zaman "hesabınıza geçti" denmiyor.

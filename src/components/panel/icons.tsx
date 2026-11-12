@@ -152,3 +152,12 @@ export function IconArrowRight(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function IconQueue(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 6h16M4 12h10M4 18h7" />
+      <circle cx="17.5" cy="16.5" r="3.5" />
+    </svg>
+  );
+}
