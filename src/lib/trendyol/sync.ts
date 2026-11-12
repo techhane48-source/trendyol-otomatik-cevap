@@ -21,6 +21,8 @@ export const SUPPORTED_QUESTION_STATUSES = ["WAITING_FOR_ANSWER", "ANSWERED", "R
 export type SupportedQuestionStatus = (typeof SUPPORTED_QUESTION_STATUSES)[number];
 
 export interface SyncOptions {
+  /** GÖREV 020: mağaza kimliği. Verilirse kimlik bilgileri mağazadan çözülür. */
+  storeId?: string;
   /** Varsayılan: TRENDYOL_SELLER_ID */
   sellerId?: string | bigint;
   /** Tek durum filtresi (eski API uyumluluğu). */
@@ -186,7 +188,7 @@ async function persistQuestion(
  * Trendyol'dan soruları çeker ve veritabanına upsert eder.
  * Salt okunur: Trendyol'a hiçbir yazma isteği gönderilmez.
  */
-export async function syncQuestions(
+async function syncQuestionsInner(
   options: SyncOptions = {},
   deps: SyncDeps = {},
 ): Promise<SyncResult> {
@@ -411,6 +413,51 @@ export async function syncQuestions(
       errorMessage,
       durationMs,
     };
+  }
+}
+
+/**
+ * Mağaza bazlı senkronizasyon sarmalayıcısı (GÖREV 020).
+ *
+ * - Kimlik bilgileri yalnızca ilgili mağazanın entegrasyon kaydından çözülür.
+ * - Aynı mağazada eşzamanlı çalışma kilitlenir; kilit her durumda bırakılır.
+ * - Enjekte edilen istemci (test/ölçüm) varsa kilit ve kimlik çözümü atlanır.
+ */
+export async function syncQuestions(options: SyncOptions = {}, deps: SyncDeps = {}): Promise<SyncResult> {
+  if (!options.storeId || deps.client) {
+    return syncQuestionsInner(options, deps);
+  }
+
+  const { acquireSyncLock, releaseSyncLock, resolveCredentials } = await import("@/lib/integrations/service");
+
+  const lock = await acquireSyncLock(options.storeId);
+  if (!lock.acquired) {
+    throw new SyncLockedError(lock.reason ?? "SYNC_ALREADY_RUNNING");
+  }
+
+  try {
+    const credentials = await resolveCredentials(options.storeId);
+    const client = createTrendyolClient({
+      sellerId: credentials.sellerId,
+      apiKey: credentials.apiKey,
+      apiSecret: credentials.apiSecret,
+    });
+
+    const result = await syncQuestionsInner({ ...options, sellerId: credentials.sellerId }, { ...deps, client });
+    await releaseSyncLock(options.storeId, { status: result.status, error: result.errorMessage ?? null });
+    return result;
+  } catch (error) {
+    const described = describeError(error);
+    await releaseSyncLock(options.storeId, { status: "FAILED", error: described.errorCode });
+    throw error;
+  }
+}
+
+/** Aynı mağazada zaten çalışan bir senkronizasyon varken fırlatılır. */
+export class SyncLockedError extends Error {
+  constructor(reason: string) {
+    super(reason === "SYNC_ALREADY_RUNNING" ? "Bu mağazada senkronizasyon zaten çalışıyor." : "Senkronizasyon başlatılamadı.");
+    this.name = "SyncLockedError";
   }
 }
 

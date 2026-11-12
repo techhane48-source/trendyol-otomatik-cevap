@@ -105,27 +105,27 @@ export async function POST(request: NextRequest) {
     if (!scope) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
     if (scope.role === "SUPPORT") return NextResponse.json({ error: "Yetkisiz" }, { status: 403 });
 
-    // Oturumlu kullanıcıda mağazanın Trendyol kimliği bu kurulumun kimliğiyle eşleşmeli.
-    if (!scope.legacy) {
-      const store = await getPrisma().store.findUnique({ where: { id: scope.storeId }, select: { sellerId: true } });
-      const env = getEnv();
-      if (!store || store.sellerId.toString() !== String(env.TRENDYOL_SELLER_ID)) {
-        return NextResponse.json(
-          { error: "Bu mağaza için Trendyol kimlik bilgisi tanımlı değil." },
-          { status: 403 },
-        );
+    // GÖREV 020: kimlik bilgileri mağazanın kendi entegrasyon kaydından çözülür.
+    const { IntegrationError } = await import("@/lib/integrations/service");
+    try {
+      const result = await syncQuestions({
+        ...rest,
+        storeId: scope.storeId,
+        statuses: effectiveStatuses,
+        trigger: "api",
+      });
+
+      // Eksik senkronizasyon yanıt gövdesinde `complete: false`, `status: "PARTIAL"` ve
+      // `incompleteReason` alanlarıyla açıkça bildirilir.
+      return NextResponse.json(result, { status: result.status === "FAILED" ? 502 : 200 });
+    } catch (error) {
+      if (error instanceof IntegrationError) {
+        const status = error.code === "INTEGRATION_MISSING" || error.code === "INTEGRATION_DISABLED" ? 409 : 500;
+        return NextResponse.json({ error: error.message, code: error.code }, { status });
       }
+      throw error;
     }
 
-    const result = await syncQuestions({
-      ...rest,
-      statuses: effectiveStatuses,
-      trigger: "api",
-    });
-
-    // Eksik senkronizasyon yanıt gövdesinde `complete: false`, `status: "PARTIAL"` ve
-    // `incompleteReason` alanlarıyla açıkça bildirilir.
-    return NextResponse.json(result, { status: result.status === "FAILED" ? 502 : 200 });
   } catch (error) {
     if (error instanceof InvalidDateRangeError || error instanceof UnsupportedQuestionStatusError) {
       return errorResponse(400, error.message);

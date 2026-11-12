@@ -55,6 +55,7 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
       { label: "Kalite ve Performans", href: "/quality", icon: IconChart },
       { label: "Kullanıcılar", href: "/kullanicilar", icon: IconUser },
       { label: "Mağaza Ayarları", href: "/ayarlar", icon: IconSettings },
+  { label: "Entegrasyonlar", href: "/ayarlar/entegrasyonlar", icon: IconSettings },
     ],
   },
 ];
@@ -68,6 +69,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/product-bank": { title: "Ürün Bilgi Bankası", subtitle: "Katalogdan otomatik çıkarılan ürün bilgileri" },
   "/kullanicilar": { title: "Kullanıcılar", subtitle: "Mağaza kullanıcıları ve roller" },
   "/ayarlar": { title: "Mağaza Ayarları", subtitle: "İş akışı, işlem türleri, sipariş kuralı ve modüller" },
+  "/ayarlar/entegrasyonlar": { title: "Entegrasyonlar", subtitle: "Mağaza bazlı Trendyol bağlantısı ve senkronizasyon durumu" },
   "/work-queue": { title: "İş Kuyruğu", subtitle: "Soruları sınıflandır, ekibe yönlendir, sonuçlandır" },
   "/policies": { title: "Mağaza Politikaları", subtitle: "Ürün bilgisinden ayrı işletme kuralları (özel ölçü, dikim, fiyat)" },
   "/answers": { title: "Geçmiş Cevaplar", subtitle: "Geçmiş satıcı cevaplarının inceleme durumu" },

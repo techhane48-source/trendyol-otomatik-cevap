@@ -1301,3 +1301,73 @@ Toplam: **444 test / 26 dosya**, `tsc` 0, build 0.
 - Kalite/kullanım kayıtlarında `storeId` sonradan eklendi; migration öncesi satırlar ilk mağazaya bağlandı.
 - Silme uçları yok (soft/hard delete); IDOR testleri okuma/güncelleme/başlatma üzerinden yapıldı.
 - `LEGACY_LOGIN=on` acil durum anahtarı bilinçli olarak bırakıldı; üretimde kullanılmamalı.
+
+## GÖREV 020 — Çok mağazalı Trendyol entegrasyonu
+
+**Branch:** `task-020-magaza-bazli-trendyol` (başlangıç `6348245`)
+
+### 1. Veri modeli
+
+`StoreIntegration` (`store_integrations`, mağaza başına **tek** kayıt):
+
+| Alan | Açıklama |
+|---|---|
+| `sellerId` | Trendyol satıcı ID (BigInt) |
+| `apiKeyEnc`, `apiSecretEnc` | AES-256-GCM şifreli sırlar (düz metin asla saklanmaz) |
+| `keyId` | Şifreleme anahtarı kimliği (rotasyon takibi, sır içermez) |
+| `status` | `UNCONFIGURED / CONNECTED / ERROR / DISABLED` |
+| `lastCheckAt`, `lastSuccessAt`, `lastError` | Bağlantı testi geçmişi; hata metni sır içermez |
+| `lastSyncAt`, `lastSyncStatus`, `lastSyncError` | Senkronizasyon geçmişi |
+| `syncLockedAt` | Aynı mağazada eşzamanlı senkronizasyon kilidi (10 dk sonra ölü sayılır) |
+
+### 2. Şifreleme
+
+- **AES-256-GCM**, rastgele 12-byte nonce, auth tag doğrulaması.
+- Anahtar yalnızca `INTEGRATION_ENCRYPTION_KEY` ortam değişkeninden (32 byte base64/hex); **veritabanında yok**.
+- Format `v1.<keyId>.<iv>.<tag>.<cipher>`; `keyId` rotasyonu izlemek için.
+- Anahtar yoksa **fail-closed**: kaydetme ve çözme hata verir (`ENCRYPTION_KEY_MISSING`), bağlantı sessizce env'e düşmez.
+- Rotasyon tasarımı: yeni anahtar eklenir → yeni kayıtlar yeni `keyId` ile yazılır → eski kayıtlar çözülüp yeniden şifrelenir (`scripts/` ile toplu rotasyon); `keyId` uyuşmazlığı "rotasyon gerekli" hatası verir, yanlış anahtarla çözme denemesi yapılmaz.
+- API Secret panelde **maskeli** (son 4 karakter), yanıtlarda ve loglarda hiç görünmez; hata metinleri yalnızca kod/HTTP durumu içerir.
+
+### 3. Panel
+
+`/ayarlar/entegrasyonlar` — OWNER/ADMIN:
+
+- Satıcı ID + API Key + API Secret girişi (şifreli kayıt)
+- **Bağlantıyı test et**: Trendyol'a salt okunur `questions/filter` isteği; başarısızsa `ERROR` yazılır, asla `CONNECTED` gösterilmez
+- Durum, son kontrol/başarılı zaman, son hata, son senkronizasyon
+- Devre dışı bırak / yeniden etkinleştir
+- SUPPORT: sayfa ve aksiyon düzeyinde reddedilir (`/yetkisiz`), sır göremez/değiştiremez
+
+### 4. Mağaza bazlı servisler
+
+| Servis | Davranış |
+|---|---|
+| Soru senkronizasyonu (`syncQuestions`) | `storeId` verilirse kimlik bilgileri **o mağazanın** kaydından çözülür; env kimliği kullanılmaz |
+| `POST /api/sync` | `storeId` oturumdan (`apiScopeFromRequest`); SUPPORT 403; bağlantı yoksa 409 |
+| Bağlantı testi | Mağazanın kendi kimliğiyle salt okunur GET |
+| Sipariş / iade / katalog istemcileri | İstemci, çağıran modülün mağazası için çözülen kimlikle oluşturulur |
+
+- İstemcinin gönderdiği mağaza kimliğine güvenilmez.
+- Bağlantı yoksa **başka mağazanın kimliğine geri dönülmez** (`INTEGRATION_MISSING`).
+- Senkronizasyon kilidi mağaza bazlıdır: A'nın hatası/kilit durumu B'yi etkilemez.
+
+### 5. Aura Perde geçişi
+
+`scripts/migrate-aura-integration.mts`:
+
+- Yalnızca `AURA_SELLER_ID` (varsayılan 1081168) mağazasına yazar; env'deki satıcı ID farklıysa **reddeder** (`SELLER_MISMATCH`).
+- `--dry-run` varsayılan; `--apply` ile yazar; mevcut kayıt varsa üzerine yazmaz (`--force` gerekir).
+- Sırları stdout'a basmaz; yalnızca `storeId`, `status`, `keyId` ve "sırlar var mı" bilgisini yazar.
+- **Bu kurulumda uygulandı**: Aura mağazası `storeId` ile eşleşti, kimlik bilgileri şifreli olarak taşındı, canlı salt okunur test **CONNECTED** döndü (gerçek Trendyol API'sine istek atıldı, soru listesi okundu).
+- Geçiş başarısız olsa veri silinmez; env değerleri yerinde kalır (geri dönüş yolu).
+
+### 6. Testler (`tests/integrations.test.ts`, 16 test)
+
+Şifreleme gidiş-dönüş/nonce · anahtar yoksa fail-closed · farklı anahtar reddi · maskeleme · sırların DB'de şifreli ve görünümde maskeli olması · SUPPORT reddi · geçersiz satıcı ID · A'nın kimliğinin B'de kullanılamaması · devre dışı bağlantının kimlik vermemesi · mağaza başına ayrı satıcı ID · 401/403 ile bağlantı testinin ERROR kalması · başarılı testte CONNECTED · mağaza bazlı kilit + A hatasının B'yi etkilememesi · aynı sipariş numarasının iki mağazada ayrı kayıt olması.
+
+### Kalan riskler
+
+- Katalog/sipariş/claim istemcileri halen çağrı yerinde mağaza kimliğiyle oluşturuluyor; tüm çağrı yollarının tek bir `clientForStore(storeId)` fabrikasına taşınması sıradaki adım (şu an senkronizasyon ve bağlantı testi bu yolu kullanıyor).
+- Otomatik toplu anahtar rotasyonu aracı yok; tasarım var, uygulama manuel.
+- API hız limitleri istemci tarafında yeniden deneme ile sınırlı; mağaza başına kota takibi yok.

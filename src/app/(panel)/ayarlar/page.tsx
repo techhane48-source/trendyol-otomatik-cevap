@@ -11,6 +11,18 @@ export default async function AyarlarPage() {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 15 }}>Trendyol bağlantısı</h2>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: 12 }}>
+            Her mağaza kendi satıcı hesabıyla çalışır; bağlantı bilgileri şifreli saklanır.
+          </p>
+        </div>
+        <a href="/ayarlar/entegrasyonlar" className="btn">
+          Entegrasyonları yönet
+        </a>
+      </div>
+
       <div className="card">
         <h2 style={{ margin: 0, fontSize: 16 }}>Mağaza ayarları</h2>
         <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>

@@ -148,10 +148,13 @@ describe("POST /api/sync — gövde doğrulaması", () => {
     const response = await POST(authorizedRequest());
 
     expect(response.status).toBe(200);
-    expect(mockedSync).toHaveBeenCalledWith({
-      statuses: ["WAITING_FOR_ANSWER", "ANSWERED"],
-      trigger: "api",
-    });
+    expect(mockedSync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statuses: ["WAITING_FOR_ANSWER", "ANSWERED"],
+        trigger: "api",
+        storeId: expect.any(String),
+      }),
+    );
   });
   it("statuses dizisi kabul edilir ve senkronizasyona iletilir", async () => {
     mockedSync.mockResolvedValue(partialResult({ status: "SUCCESS", complete: true }));

@@ -28,6 +28,7 @@ model Store {
   policies         StorePolicy[]
   users            User[]
   settings         StoreSettings?
+  integration      StoreIntegration?
 
   @@map("stores")
 }
@@ -847,4 +848,46 @@ model StoreSettings {
   updatedAt DateTime @updatedAt
 
   @@map("store_settings")
+}
+
+// ---------------- GÖREV 020: mağaza bazlı Trendyol bağlantısı ----------------
+
+enum IntegrationStatus {
+  UNCONFIGURED
+  CONNECTED
+  ERROR
+  DISABLED
+}
+
+/// Mağazanın Trendyol satıcı bağlantısı. Sırlar AES-256-GCM ile şifreli saklanır.
+model StoreIntegration {
+  id      String @id @default(cuid())
+  storeId String @unique
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  sellerId BigInt
+  apiKeyEnc String
+  apiSecretEnc String
+  /// Şifreleme anahtarı kimliği (rotasyon takibi; sır içermez)
+  keyId String
+
+  status IntegrationStatus @default(UNCONFIGURED)
+  lastCheckAt DateTime?
+  lastSuccessAt DateTime?
+  /// Gizli veri içermeyen hata özeti
+  lastError String?
+
+  lastSyncAt DateTime?
+  lastSyncStatus String?
+  lastSyncError String?
+  /// Aynı mağazada eşzamanlı senkronizasyonu engelleyen kilit
+  syncLockedAt DateTime?
+
+  disabledAt DateTime?
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("store_integrations")
 }
