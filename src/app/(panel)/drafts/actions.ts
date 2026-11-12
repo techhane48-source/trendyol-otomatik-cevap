@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import {
   DraftError,
@@ -40,6 +41,8 @@ function errorCodeFor(error: unknown): string {
 }
 
 export async function createDraftAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const storeId = user.storeId;
   const questionId = String(formData.get("questionId") ?? "");
   const productInfoRaw = formData.get("productInfo");
   const productInfo = typeof productInfoRaw === "string" ? productInfoRaw.trim() : "";
@@ -48,7 +51,7 @@ export async function createDraftAction(formData: FormData): Promise<void> {
 
   try {
     const actor = { name: await requireActorName() };
-    await createAiDraft({ questionId, actor, productInfo: productInfo || null });
+    await createAiDraft({ questionId, storeId, actor, productInfo: productInfo || null });
   } catch (error) {
     failure = errorCodeFor(error);
   }
@@ -58,6 +61,8 @@ export async function createDraftAction(formData: FormData): Promise<void> {
 }
 
 export async function editDraftAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const storeId = user.storeId;
   const draftId = String(formData.get("draftId") ?? "");
   const text = String(formData.get("text") ?? "");
   const noteRaw = formData.get("note");
@@ -67,7 +72,7 @@ export async function editDraftAction(formData: FormData): Promise<void> {
 
   try {
     const actor = { name: await requireActorName() };
-    await editDraft({ draftId, text, actor, note: note || null });
+    await editDraft({ draftId, storeId, text, actor, note: note || null });
   } catch (error) {
     failure = errorCodeFor(error);
   }
@@ -77,6 +82,8 @@ export async function editDraftAction(formData: FormData): Promise<void> {
 }
 
 export async function approveDraftAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const storeId = user.storeId;
   const draftId = String(formData.get("draftId") ?? "");
   const noteRaw = formData.get("note");
   const note = typeof noteRaw === "string" ? noteRaw.trim() : "";
@@ -86,7 +93,7 @@ export async function approveDraftAction(formData: FormData): Promise<void> {
 
   try {
     const actor = { name: await requireActorName() };
-    await approveDraft({ draftId, actor, note: note || null, acknowledgeWarnings });
+    await approveDraft({ draftId, storeId, actor, note: note || null, acknowledgeWarnings });
   } catch (error) {
     failure = errorCodeFor(error);
   }
@@ -96,6 +103,8 @@ export async function approveDraftAction(formData: FormData): Promise<void> {
 }
 
 export async function rejectDraftAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const storeId = user.storeId;
   const draftId = String(formData.get("draftId") ?? "");
   const noteRaw = formData.get("note");
   const note = typeof noteRaw === "string" ? noteRaw.trim() : "";
@@ -104,7 +113,7 @@ export async function rejectDraftAction(formData: FormData): Promise<void> {
 
   try {
     const actor = { name: await requireActorName() };
-    await rejectDraft({ draftId, actor, note: note || null });
+    await rejectDraft({ draftId, storeId, actor, note: note || null });
   } catch (error) {
     failure = errorCodeFor(error);
   }

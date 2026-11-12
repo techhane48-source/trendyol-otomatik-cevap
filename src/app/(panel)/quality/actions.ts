@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { requireUser } from "@/lib/auth/session";
+
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getEnv } from "@/lib/env";
 import { LlmNotConfiguredError, LlmRequestError } from "@/lib/llm/types";
@@ -46,7 +48,7 @@ export async function createSetAction(formData: FormData): Promise<void> {
 
   try {
     const actor = { name: await requireActorName() };
-    await createQualitySet({ name, sampleCount, actor });
+    await createQualitySet({ storeId: (await requireUser()).storeId, name, sampleCount, actor });
   } catch (error) {
     failure = await errorCodeFor(error);
   }

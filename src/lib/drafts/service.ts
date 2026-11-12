@@ -290,6 +290,8 @@ export async function createAiDraft(
     includeHistory?: boolean;
     /** GÖREV 014: risk bazlı otomatik güven (A sınıfı katalog bilgisi) kullanılsın mı? Ölçüm için kapatılabilir. */
     autoTrust?: boolean;
+    /** GÖREV 019: oturumun mağazası. Verilirse soru bu mağazaya ait olmalıdır. */
+    storeId?: string;
   },
   deps: DraftDeps = {},
 ): Promise<DraftView> {
@@ -859,7 +861,7 @@ export async function createAiDraft(
 
 /** Taslağı düzenler: YENİ revizyon oluşturur, eski revizyon korunur. */
 export async function editDraft(
-  input: { draftId: string; text: string; actor: Actor; note?: string | null },
+  input: { draftId: string; storeId?: string; text: string; actor: Actor; note?: string | null },
   deps: DraftDeps = {},
 ): Promise<DraftView> {
   const actorName = requireActor(input.actor);
@@ -869,7 +871,9 @@ export async function editDraft(
   if (text.length < 5) throw new DraftError("INVALID_TEXT", "Taslak metni en az 5 karakter olmalı.");
   if (text.length > 2_000) throw new DraftError("INVALID_TEXT", "Taslak metni 2000 karakteri aşamaz.");
 
-  const base = await prisma.answerDraft.findUnique({ where: { id: input.draftId } });
+  const base = await prisma.answerDraft.findFirst({
+    where: { id: input.draftId, ...(input.storeId ? { storeId: input.storeId } : {}) },
+  });
   if (!base) throw new DraftError("DRAFT_NOT_FOUND", "Taslak bulunamadı.");
   if (base.status === "APPROVED" || base.status === "REJECTED") {
     throw new DraftError("DRAFT_LOCKED", "Onaylanmış veya reddedilmiş taslak düzenlenemez; yeni taslak oluşturun.");
@@ -935,13 +939,15 @@ export async function editDraft(
  * onaylayan ve onay zamanı yazılır. Guardrail uyarıları varsa açık kabul gerekir.
  */
 export async function approveDraft(
-  input: { draftId: string; actor: Actor; note?: string | null; acknowledgeWarnings?: boolean },
+  input: { draftId: string; storeId?: string; actor: Actor; note?: string | null; acknowledgeWarnings?: boolean },
   deps: DraftDeps = {},
 ): Promise<DraftView> {
   const actorName = requireActor(input.actor);
   const prisma = deps.prisma ?? getPrisma();
 
-  const draft = await prisma.answerDraft.findUnique({ where: { id: input.draftId } });
+  const draft = await prisma.answerDraft.findFirst({
+    where: { id: input.draftId, ...(input.storeId ? { storeId: input.storeId } : {}) },
+  });
   if (!draft) throw new DraftError("DRAFT_NOT_FOUND", "Taslak bulunamadı.");
   if (draft.status === "APPROVED") throw new DraftError("ALREADY_APPROVED", "Taslak zaten onaylanmış.");
   if (draft.status === "REJECTED") throw new DraftError("DRAFT_REJECTED", "Reddedilmiş taslak onaylanamaz.");
@@ -1015,13 +1021,15 @@ export async function approveDraft(
 
 /** Taslağı reddeder (geçmiş ve metin korunur). */
 export async function rejectDraft(
-  input: { draftId: string; actor: Actor; note?: string | null },
+  input: { draftId: string; storeId?: string; actor: Actor; note?: string | null },
   deps: DraftDeps = {},
 ): Promise<DraftView> {
   const actorName = requireActor(input.actor);
   const prisma = deps.prisma ?? getPrisma();
 
-  const draft = await prisma.answerDraft.findUnique({ where: { id: input.draftId } });
+  const draft = await prisma.answerDraft.findFirst({
+    where: { id: input.draftId, ...(input.storeId ? { storeId: input.storeId } : {}) },
+  });
   if (!draft) throw new DraftError("DRAFT_NOT_FOUND", "Taslak bulunamadı.");
   if (draft.status === "APPROVED") throw new DraftError("ALREADY_APPROVED", "Onaylanmış taslak reddedilemez.");
   if (draft.status === "REJECTED") throw new DraftError("ALREADY_REJECTED", "Taslak zaten reddedilmiş.");

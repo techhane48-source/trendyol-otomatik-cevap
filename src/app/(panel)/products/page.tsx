@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
@@ -78,6 +79,7 @@ export default async function ProductsPage({
 }: {
   searchParams: Promise<{ hata?: string; ok?: string; q?: string }>;
 }) {
+  const user = await requireUser();
   const cookieStore = await cookies();
   const access = checkAccess(cookieStore.get(ACCESS_COOKIE_NAME)?.value ?? null);
 
@@ -103,7 +105,7 @@ export default async function ProductsPage({
   let loadError: string | null = null;
 
   try {
-    products = await listProductInfos({ query: query || null, limit: 50 });
+    products = await listProductInfos(user.storeId, { query: query || null, limit: 50 });
   } catch (error) {
     log.error("Ürün bilgileri yüklenemedi", { error });
     loadError = "Ürün bilgileri yüklenemedi.";
@@ -111,7 +113,7 @@ export default async function ProductsPage({
 
   const histories = new Map<string, Awaited<ReturnType<typeof getProductInfoHistory>>>();
   for (const product of products) {
-    histories.set(product.id, await getProductInfoHistory(product.id));
+    histories.set(product.id, await getProductInfoHistory(user.storeId, product.id));
   }
 
   return (

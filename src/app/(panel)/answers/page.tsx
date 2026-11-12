@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { answerMemoryStats, listAnswerMemory } from "@/lib/history/service";
 import type { AnswerReviewStatus } from "@/generated/prisma/enums";
@@ -34,6 +35,7 @@ export default async function AnswersPage({
 }: {
   searchParams: Promise<{ q?: string; durum?: string; ok?: string; hata?: string }>;
 }) {
+  const user = await requireUser();
   const store = await cookies();
   const access = checkAccess(store.get(ACCESS_COOKIE_NAME)?.value ?? null);
   if (!access.ok) {
@@ -48,7 +50,7 @@ export default async function AnswersPage({
   const params = await searchParams;
   const review = (params.durum as AnswerReviewStatus | undefined) ?? undefined;
   const q = params.q?.trim() || undefined;
-  const [rows, stats] = await Promise.all([listAnswerMemory({ q, review, limit: 100 }), answerMemoryStats()]);
+  const [rows, stats] = await Promise.all([listAnswerMemory({ storeId: user.storeId, q, review, limit: 100 }), answerMemoryStats(user.storeId)]);
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1200 }}>

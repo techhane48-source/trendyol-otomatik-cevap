@@ -17,6 +17,13 @@ import {
 import { createProductInfo, verifyProductInfo } from "@/lib/products/service";
 
 const prisma = getPrisma();
+
+async function storeIdNow(): Promise<string> {
+  const existing = await prisma.store.findFirst({ orderBy: { createdAt: "asc" } });
+  if (existing) return existing.id;
+  const created = await prisma.store.create({ data: { sellerId: BigInt(700000 + Math.floor(Math.random() * 90000)) } });
+  return created.id;
+}
 const actor = { name: "kalite-yoneticisi" };
 
 const PROVIDER_ERROR = "Sağlayıcı hatası";
@@ -77,7 +84,7 @@ afterAll(async () => {
 describe("değerlendirme seti", () => {
   it("30 örnekle set oluşturur ve soru kimliklerini sabitler", async () => {
     await seedQuestions(35);
-    const set = await createQualitySet({ name: "Ekim seti", sampleCount: MIN_SAMPLES, actor }, { prisma });
+    const set = await createQualitySet({ storeId: await storeIdNow(), name: "Ekim seti", sampleCount: MIN_SAMPLES, actor }, { prisma });
 
     expect(set.sampleCount).toBe(MIN_SAMPLES);
 
@@ -88,22 +95,22 @@ describe("değerlendirme seti", () => {
 
   it("izin verilen aralık dışındaki örnek sayısını reddeder", async () => {
     await seedQuestions(5);
-    await expect(createQualitySet({ sampleCount: 10, actor }, { prisma })).rejects.toMatchObject({
+    await expect(createQualitySet({ storeId: await storeIdNow(), sampleCount: 10, actor }, { prisma })).rejects.toMatchObject({
       code: "INVALID_SAMPLE_COUNT",
     });
-    await expect(createQualitySet({ sampleCount: 51, actor }, { prisma })).rejects.toMatchObject({
+    await expect(createQualitySet({ storeId: await storeIdNow(), sampleCount: 51, actor }, { prisma })).rejects.toMatchObject({
       code: "INVALID_SAMPLE_COUNT",
     });
   });
 
   it("soru yoksa güvenli hata verir", async () => {
-    await expect(createQualitySet({ sampleCount: 30, actor }, { prisma })).rejects.toMatchObject({
+    await expect(createQualitySet({ storeId: await storeIdNow(), sampleCount: 30, actor }, { prisma })).rejects.toMatchObject({
       code: "NO_QUESTIONS",
     });
   });
 
   it("yönetici kimliği olmadan işlem yapılamaz", async () => {
-    await expect(createQualitySet({ sampleCount: 30, actor: { name: "  " } }, { prisma })).rejects.toBeInstanceOf(
+    await expect(createQualitySet({ storeId: await storeIdNow(), sampleCount: 30, actor: { name: "  " } }, { prisma })).rejects.toBeInstanceOf(
       QualityAccessError,
     );
   });
@@ -113,12 +120,12 @@ describe("değerlendirme koşusu", () => {
   it("örnekleri değerlendirir, PII maskeleyerek saklar ve kullanım kaydı üretir", async () => {
     await seedQuestions(30);
     const provider = createMockProvider(() => "Sorunuz için teşekkür ederiz, ilgili bilgiyi iletiyoruz.");
-    const set = await createQualitySet({ name: "Koşu seti", sampleCount: 30, actor }, { prisma });
+    const set = await createQualitySet({ storeId: await storeIdNow(), name: "Koşu seti", sampleCount: 30, actor }, { prisma });
 
     const result = await startQualityRun({ setId: set.id, actor }, { prisma, provider });
     expect(result.itemCount).toBe(30);
 
-    const items = await listRunItems(result.runId, { prisma });
+    const items = await listRunItems(await storeIdNow(), result.runId, { prisma });
     expect(items).toHaveLength(30);
     expect(items[0].questionMasked).not.toContain("0532");
     expect(items[0].questionMasked).toContain("[telefon]");
@@ -132,10 +139,10 @@ describe("değerlendirme koşusu", () => {
   it("doğrulanmış bilgi yokken kesin vaat içeren cevabı NEEDS_INFO olarak işaretler", async () => {
     await seedQuestions(30);
     const provider = createMockProvider(() => "Bu perde kesinlikle göstermez, 5 yıl garantilidir.");
-    const set = await createQualitySet({ name: "Vaat seti", sampleCount: 30, actor }, { prisma });
+    const set = await createQualitySet({ storeId: await storeIdNow(), name: "Vaat seti", sampleCount: 30, actor }, { prisma });
 
     const result = await startQualityRun({ setId: set.id, actor }, { prisma, provider });
-    const items = await listRunItems(result.runId, { prisma });
+    const items = await listRunItems(await storeIdNow(), result.runId, { prisma });
 
     expect(items.every((item) => item.outcome === "NEEDS_INFO")).toBe(true);
     expect(items[0].checks?.needsHuman).toBe(true);
@@ -145,12 +152,12 @@ describe("değerlendirme koşusu", () => {
   it("aynı seti tekrar çalıştırınca yeni koşu oluşur ve karşılaştırılabilir", async () => {
     await seedQuestions(30);
     const provider = createMockProvider(() => "Bilgiyi kontrol edip ileteceğiz.");
-    const set = await createQualitySet({ name: "Karşılaştırma", sampleCount: 30, actor }, { prisma });
+    const set = await createQualitySet({ storeId: await storeIdNow(), name: "Karşılaştırma", sampleCount: 30, actor }, { prisma });
 
     const first = await startQualityRun({ setId: set.id, actor }, { prisma, provider });
     const second = await startQualityRun({ setId: set.id, actor }, { prisma, provider });
 
-    const runs = await listQualityRuns({ prisma });
+    const runs = await listQualityRuns(await storeIdNow(), { prisma });
     expect(runs.length).toBe(2);
     expect(runs[0].runId).toBe(second.runId);
     expect(runs[0].itemCount).toBe(runs[1].itemCount);
@@ -167,7 +174,7 @@ describe("değerlendirme koşusu", () => {
         throw new Error(PROVIDER_ERROR);
       },
     };
-    const set = await createQualitySet({ name: "Hata seti", sampleCount: 30, actor }, { prisma });
+    const set = await createQualitySet({ storeId: await storeIdNow(), name: "Hata seti", sampleCount: 30, actor }, { prisma });
     const result = await startQualityRun({ setId: set.id, actor }, { prisma, provider });
 
     const run = await prisma.qualityRun.findUnique({ where: { id: result.runId } });
@@ -186,9 +193,9 @@ describe("insan değerlendirmesi ve metrikler", () => {
   it("1–5 arası puanı kaydeder, geçersiz puanı reddeder", async () => {
     await seedQuestions(30);
     const provider = createMockProvider(() => "Bilgiyi ileteceğiz.");
-    const set = await createQualitySet({ name: "Puan seti", sampleCount: 30, actor }, { prisma });
+    const set = await createQualitySet({ storeId: await storeIdNow(), name: "Puan seti", sampleCount: 30, actor }, { prisma });
     const result = await startQualityRun({ setId: set.id, actor }, { prisma, provider });
-    const items = await listRunItems(result.runId, { prisma });
+    const items = await listRunItems(await storeIdNow(), result.runId, { prisma });
 
     await expect(scoreQualityItem({ itemId: items[0].id, score: 0, actor }, { prisma })).rejects.toBeInstanceOf(
       QualityError,
@@ -209,14 +216,14 @@ describe("insan değerlendirmesi ve metrikler", () => {
   it("ortalama insan puanı ve oranları raporlar", async () => {
     await seedQuestions(30);
     const provider = createMockProvider(() => "Bilgiyi ileteceğiz.");
-    const set = await createQualitySet({ name: "Metrik seti", sampleCount: 30, actor }, { prisma });
+    const set = await createQualitySet({ storeId: await storeIdNow(), name: "Metrik seti", sampleCount: 30, actor }, { prisma });
     const result = await startQualityRun({ setId: set.id, actor }, { prisma, provider });
-    const items = await listRunItems(result.runId, { prisma });
+    const items = await listRunItems(await storeIdNow(), result.runId, { prisma });
 
     await scoreQualityItem({ itemId: items[0].id, score: 4, actor }, { prisma });
     await scoreQualityItem({ itemId: items[1].id, score: 2, actor }, { prisma });
 
-    const [run] = await listQualityRuns({ prisma });
+    const [run] = await listQualityRuns(await storeIdNow(), { prisma });
     expect(run.avgHumanScore).toBe(3);
     expect(run.scoredCount).toBe(2);
     expect(run.warningRate).toBe(0);
@@ -225,9 +232,11 @@ describe("insan değerlendirmesi ve metrikler", () => {
   });
 
   it("günlük kullanım raporu başarısız çağrıları da sayar", async () => {
+    const usageStoreId = await storeIdNow();
     await prisma.llmUsage.createMany({
       data: [
         {
+          storeId: usageStoreId,
           provider: "mock",
           model: "mock-model",
           promptVersion: "v1",
@@ -239,6 +248,7 @@ describe("insan değerlendirmesi ve metrikler", () => {
           estimatedCostUSD: 0.0001,
         },
         {
+          storeId: usageStoreId,
           provider: "mock",
           model: "mock-model",
           promptVersion: "v1",
@@ -249,7 +259,7 @@ describe("insan değerlendirmesi ve metrikler", () => {
       ],
     });
 
-    const report = await getUsageReport({ prisma });
+    const report = await getUsageReport(await storeIdNow(), { prisma });
     expect(report.totalCalls).toBe(2);
     expect(report.failedCalls).toBe(1);
     expect(report.totalTokens).toBe(150);

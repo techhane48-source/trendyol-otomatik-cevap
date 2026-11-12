@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { decideOrderStatus } from "@/lib/orders/decision";
 import { listChangeRequests, searchOrders } from "@/lib/orders/service";
@@ -56,6 +57,7 @@ export default async function OrdersPage({
 }: {
   searchParams: Promise<{ q?: string; ok?: string; hata?: string; ozet?: string; soru?: string }>;
 }) {
+  const user = await requireUser();
   const store = await cookies();
   const access = checkAccess(store.get(ACCESS_COOKIE_NAME)?.value ?? null);
   if (!access.ok) {
@@ -69,8 +71,8 @@ export default async function OrdersPage({
 
   const params = await searchParams;
   const orderNumber = params.q?.trim() ?? "";
-  const result = orderNumber.length > 0 ? await searchOrders({ orderNumber }) : null;
-  const requests = orderNumber ? await listChangeRequests({ orderNumber }) : [];
+  const result = orderNumber.length > 0 ? await searchOrders(user.storeId, { orderNumber }) : null;
+  const requests = orderNumber ? await listChangeRequests(user.storeId, { orderNumber }) : [];
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1150 }}>

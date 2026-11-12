@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { ACCESS_COOKIE_NAME, checkRequestAccess } from "@/lib/auth";
+import { apiScopeFromRequest } from "@/lib/auth/session";
+import { getPrisma } from "@/lib/prisma";
+import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
 import {
   InvalidDateRangeError,
@@ -97,6 +100,22 @@ export async function POST(request: NextRequest) {
   try {
     const { status, statuses, ...rest } = parsed.data;
     const effectiveStatuses = statuses ?? (status ? [status] : [...DEFAULT_STATUSES]);
+
+    const scope = await apiScopeFromRequest(request);
+    if (!scope) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    if (scope.role === "SUPPORT") return NextResponse.json({ error: "Yetkisiz" }, { status: 403 });
+
+    // Oturumlu kullanıcıda mağazanın Trendyol kimliği bu kurulumun kimliğiyle eşleşmeli.
+    if (!scope.legacy) {
+      const store = await getPrisma().store.findUnique({ where: { id: scope.storeId }, select: { sellerId: true } });
+      const env = getEnv();
+      if (!store || store.sellerId.toString() !== String(env.TRENDYOL_SELLER_ID)) {
+        return NextResponse.json(
+          { error: "Bu mağaza için Trendyol kimlik bilgisi tanımlı değil." },
+          { status: 403 },
+        );
+      }
+    }
 
     const result = await syncQuestions({
       ...rest,

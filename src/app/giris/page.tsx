@@ -1,3 +1,5 @@
+import { legacyLoginAllowed } from "@/lib/auth/session";
+
 export const dynamic = "force-dynamic";
 
 const HATA_MESAJLARI: Record<string, string> = {
@@ -5,6 +7,7 @@ const HATA_MESAJLARI: Record<string, string> = {
   "2": "Sunucuda APP_ACCESS_TOKEN tanımlı değil. Anahtar olmadan panele erişilemez.",
   "3": "Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.",
   "4": "Bu hesap devre dışı bırakılmış. Mağaza yöneticisine başvurun.",
+  "5": "Eski erişim anahtarı kapatıldı. Lütfen e-posta ve şifre ile giriş yapın.",
 };
 
 /**
@@ -17,6 +20,7 @@ const HATA_MESAJLARI: Record<string, string> = {
 export default async function GirisPage({ searchParams }: { searchParams: Promise<{ hata?: string }> }) {
   const params = await searchParams;
   const hata = params.hata ? HATA_MESAJLARI[params.hata] ?? HATA_MESAJLARI["1"] : null;
+  const allowLegacy = await legacyLoginAllowed();
 
   return (
     <main style={{ maxWidth: 380, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
@@ -83,6 +87,7 @@ export default async function GirisPage({ searchParams }: { searchParams: Promis
         </button>
       </form>
 
+      {allowLegacy ? (
       <details style={{ marginTop: 18, fontSize: 12, opacity: 0.8 }}>
         <summary style={{ cursor: "pointer" }}>Eski erişim anahtarıyla giriş (geçiş dönemi)</summary>
         <p style={{ margin: "8px 0" }}>
@@ -105,6 +110,7 @@ export default async function GirisPage({ searchParams }: { searchParams: Promis
           </button>
         </form>
       </details>
+      ) : null}
 
       <p style={{ fontSize: 11.5, opacity: 0.6, marginTop: 16, lineHeight: 1.5 }}>
         İlk kurulumda mağaza sahibi hesabı <a href="/kurulum">kurulum ekranından</a> oluşturulur. Oturum 7 gün

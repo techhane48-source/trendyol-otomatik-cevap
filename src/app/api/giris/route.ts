@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
-import { createSession, setSessionCookie } from "@/lib/auth/session";
+import { createSession, legacyLoginAllowed, setSessionCookie } from "@/lib/auth/session";
 import { login } from "@/lib/auth/users";
 
 /**
@@ -48,8 +48,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return redirectTo("/", request.url);
   }
 
-  // Geçiş dönemi: paylaşımlı anahtar (kullanımdan kaldırılacak)
+  // Geçiş dönemi: paylaşımlı anahtar — aktif OWNER varsa tamamen kapalı.
   if (token) {
+    if (!(await legacyLoginAllowed())) {
+      return redirectTo("/giris?hata=5", request.url);
+    }
     const access = checkAccess(token);
     if (!access.ok) {
       return redirectTo(access.status === 503 ? "/giris?hata=2" : "/giris?hata=1", request.url);

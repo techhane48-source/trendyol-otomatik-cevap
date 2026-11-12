@@ -19,6 +19,10 @@ import { createMockProvider } from "@/lib/llm/provider";
 import type { OrdersClient, OrderPackageDto } from "@/lib/trendyol/orders-client";
 
 const prisma = getPrisma();
+
+async function storeIdNow(): Promise<string> {
+  return (await prisma.store.findFirstOrThrow()).id;
+}
 const actor = { name: "uretim-sorumlusu" };
 
 function pkg(overrides: Partial<OrderPackageDto> = {}): OrderPackageDto {
@@ -318,7 +322,7 @@ describe("onay ve ret", () => {
     expect(approved.status).toBe("APPROVED");
     expect(approved.orderStatusAtApproval).toContain("Created");
 
-    const production = await listApprovedForProduction({ prisma });
+    const production = await listApprovedForProduction(await storeIdNow(), { prisma });
     expect(production).toHaveLength(1);
     expect(production[0].approvedBy).toBe("uretim-sorumlusu");
   });
@@ -404,9 +408,9 @@ describe("onay ve ret", () => {
     const requestId = await pendingRequest(client);
     await approveChangeRequest({ requestId, actor }, { prisma, client });
 
-    const approved = await listChangeRequests({ status: "APPROVED" }, { prisma });
+    const approved = await listChangeRequests(await storeIdNow(), { status: "APPROVED" }, { prisma });
     expect(approved).toHaveLength(1);
-    const pending = await listChangeRequests({ status: "PENDING_REVIEW" }, { prisma });
+    const pending = await listChangeRequests(await storeIdNow(), { status: "PENDING_REVIEW" }, { prisma });
     expect(pending).toHaveLength(0);
   });
 });

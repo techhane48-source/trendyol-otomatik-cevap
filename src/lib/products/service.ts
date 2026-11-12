@@ -273,6 +273,7 @@ export async function createProductInfo(
 export async function updateProductInfo(
   input: {
     id: string;
+    storeId?: string;
     title?: string | null;
     attributes?: ProductAttribute[];
     notes?: string | null;
@@ -284,7 +285,9 @@ export async function updateProductInfo(
   const actorName = requireActor(input.actor);
   const prisma = deps.prisma ?? getPrisma();
 
-  const current = await prisma.productInfo.findUnique({ where: { id: input.id } });
+  const current = await prisma.productInfo.findFirst({
+    where: { id: input.id, ...(input.storeId ? { storeId: input.storeId } : {}) },
+  });
   if (!current) throw new ProductInfoError("PRODUCT_INFO_NOT_FOUND", "Ürün bilgi kartı bulunamadı.");
 
   const attributes = input.attributes ? validateAttributes(input.attributes) : normalizeAttributes(current.attributes);
@@ -345,13 +348,15 @@ export async function updateProductInfo(
 
 /** Kartı doğrular: doğrulayan kişi ve zaman kaydedilir. */
 export async function verifyProductInfo(
-  input: { id: string; actor: ProductActor; note?: string | null },
+  input: { id: string; storeId?: string; actor: ProductActor; note?: string | null },
   deps: ProductDeps = {},
 ): Promise<ProductInfoView> {
   const actorName = requireActor(input.actor);
   const prisma = deps.prisma ?? getPrisma();
 
-  const current = await prisma.productInfo.findUnique({ where: { id: input.id } });
+  const current = await prisma.productInfo.findFirst({
+    where: { id: input.id, ...(input.storeId ? { storeId: input.storeId } : {}) },
+  });
   if (!current) throw new ProductInfoError("PRODUCT_INFO_NOT_FOUND", "Ürün bilgi kartı bulunamadı.");
   if (current.status === "VERIFIED") {
     throw new ProductInfoError("ALREADY_VERIFIED", "Kart zaten doğrulanmış.");
@@ -383,13 +388,15 @@ export async function verifyProductInfo(
 
 /** Doğrulamayı geri alır (kart yeniden DRAFT olur). */
 export async function unverifyProductInfo(
-  input: { id: string; actor: ProductActor; note?: string | null },
+  input: { id: string; storeId?: string; actor: ProductActor; note?: string | null },
   deps: ProductDeps = {},
 ): Promise<ProductInfoView> {
   const actorName = requireActor(input.actor);
   const prisma = deps.prisma ?? getPrisma();
 
-  const current = await prisma.productInfo.findUnique({ where: { id: input.id } });
+  const current = await prisma.productInfo.findFirst({
+    where: { id: input.id, ...(input.storeId ? { storeId: input.storeId } : {}) },
+  });
   if (!current) throw new ProductInfoError("PRODUCT_INFO_NOT_FOUND", "Ürün bilgi kartı bulunamadı.");
   if (current.status === "DRAFT") {
     throw new ProductInfoError("NOT_VERIFIED", "Kart zaten doğrulanmamış durumda.");
@@ -418,6 +425,7 @@ export async function unverifyProductInfo(
 
 /** Panel araması: ürün kimliği / varyant kimliği / başlık içinde arar. */
 export async function listProductInfos(
+  storeId: string,
   options: { query?: string | null; status?: "DRAFT" | "VERIFIED" | null; limit?: number } = {},
   deps: ProductDeps = {},
 ): Promise<ProductInfoView[]> {
@@ -427,6 +435,7 @@ export async function listProductInfos(
 
   const rows = await prisma.productInfo.findMany({
     where: {
+      storeId,
       ...(options.status ? { status: options.status } : {}),
       ...(query
         ? {
@@ -446,8 +455,11 @@ export async function listProductInfos(
 }
 
 /** Kart geçmişi (değişiklik kayıtları). */
-export async function getProductInfoHistory(id: string, deps: ProductDeps = {}) {
+export async function getProductInfoHistory(storeId: string, id: string, deps: ProductDeps = {}) {
   const prisma = deps.prisma ?? getPrisma();
+
+  const owner = await prisma.productInfo.findFirst({ where: { id, storeId }, select: { id: true } });
+  if (!owner) return [];
 
   return prisma.productInfoEvent.findMany({
     where: { productInfoId: id },

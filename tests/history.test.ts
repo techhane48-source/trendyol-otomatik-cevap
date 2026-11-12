@@ -17,6 +17,10 @@ import { disconnectPrisma, getPrisma } from "@/lib/prisma";
 import type { LlmCompletion, LlmMessage } from "@/lib/llm/types";
 
 const prisma = getPrisma();
+
+async function storeIdNow(): Promise<string> {
+  return (await prisma.store.findFirstOrThrow()).id;
+}
 const actor = { name: "uretim-sorumlusu" };
 process.env.ADMIN_ACTOR_NAME = "uretim-sorumlusu";
 
@@ -200,7 +204,7 @@ describe("geçmiş cevap doğrulama paneli", () => {
     await seedQuestion({ text: "Soru B kumaş?", answer: "Cevap B." });
     await reviewAnswer({ questionId: a, status: "VERIFIED", actor: "y" }, { prisma });
 
-    const stats = await answerMemoryStats({ prisma });
+    const stats = await answerMemoryStats(await storeIdNow(), { prisma });
     expect(stats.total).toBe(2);
     expect(stats.verified).toBe(1);
     expect(stats.unreviewed).toBe(1);

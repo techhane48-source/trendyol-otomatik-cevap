@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { ACCESS_COOKIE_NAME, checkRequestAccess } from "@/lib/auth";
+import { apiScopeFromRequest } from "@/lib/auth/session";
 import { getPrisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
 
@@ -39,10 +40,17 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { status, page, limit, storeId } = parsed.data;
+  // GÖREV 019: mağaza kapsamı oturumdan gelir; istemcinin storeId parametresi yok sayılır.
+  const scope = await apiScopeFromRequest(request);
+  if (!scope) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  if (parsed.data.storeId && parsed.data.storeId !== scope.storeId) {
+    return NextResponse.json({ error: "Yetkisiz" }, { status: 403 });
+  }
+
+  const { status, page, limit } = parsed.data;
   const where = {
+    storeId: scope.storeId,
     ...(status ? { status } : {}),
-    ...(storeId ? { storeId } : {}),
   };
 
   try {

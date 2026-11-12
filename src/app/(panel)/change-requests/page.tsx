@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { listApprovedForProduction, listChangeRequests } from "@/lib/orders/service";
 
@@ -59,6 +60,7 @@ export default async function ChangeRequestsPage({
 }: {
   searchParams: Promise<{ ok?: string; hata?: string; durum?: string; print?: string }>;
 }) {
+  const user = await requireUser();
   const store = await cookies();
   const access = checkAccess(store.get(ACCESS_COOKIE_NAME)?.value ?? null);
   if (!access.ok) {
@@ -72,8 +74,8 @@ export default async function ChangeRequestsPage({
 
   const params = await searchParams;
   const filter = params.durum ?? "";
-  const rows = await listChangeRequests({ status: filter || undefined, limit: 100 });
-  const approved = await listApprovedForProduction();
+  const rows = await listChangeRequests(user.storeId, { status: filter || undefined, limit: 100 });
+  const approved = await listApprovedForProduction(user.storeId);
   const printing = params.print === "1";
 
   return (

@@ -1253,3 +1253,51 @@ Toplam: **444 test / 26 dosya**, `tsc` 0, build 0.
 - Modül anahtarları menüde fiilen gizlenmiyor (yalnızca iş kuyruğu sayfası kapanıyor); diğer modüllerin gizlenmesi sonraki adım.
 - Kullanıcı bazlı `session` iptali toplu (tek tek cihaz listesi yok).
 - Trendyol'a yazma yok; sipariş değiştiren API çağrısı yok.
+
+## GÖREV 019 — SaaS güvenlik denetimi ve eski girişin kapatılması
+
+**Branch:** `task-019-saas-guvenlik` (başlangıç `d3e30e0`)
+
+### Denetim: bulunan açıklar ve düzeltmeler
+
+| # | Modül / dosya | Bulgu | Düzeltme |
+|---|---|---|---|
+| 1 | `api/questions` | Eski anahtarla **istenen `storeId`** okunabiliyordu (mağazalar arası okuma) | Kapsam `apiScopeFromRequest` ile oturumdan; parametre farklıysa 403 |
+| 2 | `api/sync` | Rol ve mağaza kontrolü yoktu; SUPPORT da senkron başlatabiliyordu | SUPPORT 403; oturumlu kullanıcıda mağazanın Trendyol sellerId'si env ile eşleşmeli |
+| 3 | `orders/service` | `listChangeRequests`, `listApprovedForProduction`, `searchOrders` mağaza filtresi yoktu | `storeId` zorunlu parametre |
+| 4 | `products/service` | Liste, geçmiş ve **update/verify/unverify** yalnız ID ile çalışıyordu (IDOR) | `listProductInfos(storeId)`, `getProductInfoHistory(storeId, id)`, mutasyonlarda mağaza kontrolü |
+| 5 | `history/service` | `answerMemoryStats` tüm mağazaları sayıyordu | `storeId` zorunlu |
+| 6 | `quality/service` + şema | Kalite seti/koşu/kullanım kayıtlarında mağaza alanı yoktu | `storeId` kolonları + migration backfill; tüm listeler ve kullanım raporu mağaza kapsamlı |
+| 7 | `drafts/service` | `createAiDraft`, `editDraft`, `approveDraft`, `rejectDraft` başka mağazanın ID'siyle çalışabiliyordu | `storeId` verildiğinde sahiplik kontrolü, aksi halde `*_NOT_FOUND` |
+| 8 | `orders/service` (talep açma) | Soru ID'si bilinerek başka mağazanın sorusuna talep açılabiliyordu | `createChangeRequestFromQuestion` mağaza kontrolü |
+| 9 | Eski ADMIN yolu | `APP_ACCESS_TOKEN` süresiz ADMIN yetkisi veriyordu | **Aktif OWNER varsa otomatik kapalı** (`legacyLoginAllowed`), `LEGACY_LOGIN=off` ile kalıcı kapatma |
+
+### Eski giriş yöntemi — bu kurulumdaki durum
+
+- Denetim anında **gerçek OWNER hesabı yok** (`users` tablosu 0). Bu nedenle görevin kuralı gereği eski anahtar **kapatılmadı**; panel erişimi kesilmedi.
+- Kod artık şu şekilde davranıyor: **aktif OWNER oluşturulduğu anda** eski anahtar yolu kendiliğinden kapanır (`/giris?hata=5`), kullanıcı oturumları etkilenmez.
+- `/kurulum` ile OWNER hesabı oluşturulduktan sonra kontrol edilecek: e-posta/şifre girişi çalışır, eski anahtar reddedilir.
+- `LEGACY_LOGIN=off` ortam değişkeni, OWNER olsun olmasın yolu kapatır (kalıcı çözüm için önerilen).
+- Test: `tests/idor.test.ts` → "aktif OWNER varken eski anahtar kapalıdır" ve `LEGACY_LOGIN=off` senaryosu.
+
+### IDOR / izolasyon testleri (`tests/idor.test.ts`, 13 test)
+
+İki ayrı mağaza ile: sorular ve geçmiş cevaplar · sipariş ve değişiklik talepleri · politikalar · ürün kartları ve geçmişi · iş kuyruğu · kalite seti/koşu · kullanıcı listesi ve ayarlar **okuma** izolasyonu; ürün kartı **güncelleme/doğrulama** reddi; iş kaydı **onay** reddi (`NOT_FOUND`, kayıt `NEW` kalır); kalite koşusu **başlatma** reddi; başka mağazanın sorusuyla **AI taslağı** üretilememesi; taslak görünürlüğü.
+
+### Diğer sertleştirmeler
+
+- `apiScopeFromRequest` route handler'larda `next/headers` bağımlılığı olmadan çalışır (test edilebilir).
+- Oturum çerezleri HttpOnly + SameSite=Lax; üretimde Secure.
+- Şifre/anahtar değerleri hiçbir log veya yanıtta yer almaz.
+
+### Testler
+
+**457 test / 27 dosya**, `tsc` 0, build 0 (3.5s). Panel: `/`, `/questions`, `/orders`, `/drafts`, `/products`, `/answers`, `/policies`, `/quality`, `/work-queue`, `/ayarlar`, `/kullanicilar` → 200.
+
+### Kalan riskler
+
+- **Trendyol kimlik bilgileri hâlâ tek set** (`.env`). Mağaza başına ayrı API anahtarı için şema + kasa gerekiyor; şu an ikinci mağaza senkron çalıştıramaz (403 ile durur).
+- Modül anahtarları menüyü gizlemiyor (yalnızca iş kuyruğu sayfası kapanıyor).
+- Kalite/kullanım kayıtlarında `storeId` sonradan eklendi; migration öncesi satırlar ilk mağazaya bağlandı.
+- Silme uçları yok (soft/hard delete); IDOR testleri okuma/güncelleme/başlatma üzerinden yapıldı.
+- `LEGACY_LOGIN=on` acil durum anahtarı bilinçli olarak bırakıldı; üretimde kullanılmamalı.

@@ -110,14 +110,14 @@ export interface AnswerMemoryStats {
   usableForAi: number;
 }
 
-export async function answerMemoryStats(deps: { prisma?: PrismaClient } = {}): Promise<AnswerMemoryStats> {
+export async function answerMemoryStats(storeId: string, deps: { prisma?: PrismaClient } = {}): Promise<AnswerMemoryStats> {
   const prisma = deps.prisma ?? getPrisma();
   const [total, verified, unreviewed, wrong, outdated] = await Promise.all([
-    prisma.question.count({ where: { answerText: { not: null } } }),
-    prisma.question.count({ where: { answerText: { not: null }, answerReviewStatus: "VERIFIED" } }),
-    prisma.question.count({ where: { answerText: { not: null }, answerReviewStatus: "UNREVIEWED" } }),
-    prisma.question.count({ where: { answerText: { not: null }, answerReviewStatus: "WRONG" } }),
-    prisma.question.count({ where: { answerText: { not: null }, answerReviewStatus: "OUTDATED" } }),
+    prisma.question.count({ where: { storeId, answerText: { not: null } } }),
+    prisma.question.count({ where: { storeId, answerText: { not: null }, answerReviewStatus: "VERIFIED" } }),
+    prisma.question.count({ where: { storeId, answerText: { not: null }, answerReviewStatus: "UNREVIEWED" } }),
+    prisma.question.count({ where: { storeId, answerText: { not: null }, answerReviewStatus: "WRONG" } }),
+    prisma.question.count({ where: { storeId, answerText: { not: null }, answerReviewStatus: "OUTDATED" } }),
   ]);
 
   return { total, verified, unreviewed, wrong, outdated, usableForAi: verified + unreviewed };

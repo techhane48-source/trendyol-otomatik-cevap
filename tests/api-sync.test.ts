@@ -57,6 +57,8 @@ function partialResult(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   // Erişim kapısı her ortamda fail-closed: testler geçerli anahtarla çalışır.
   process.env.APP_ACCESS_TOKEN = "test-erisim-anahtari";
+  // Geçiş dönemi yolu: testlerde açıkça etkinleştirilir.
+  process.env.LEGACY_LOGIN = "on";
   setNodeEnv("test");
   mockedSync.mockReset();
 });

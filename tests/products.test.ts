@@ -14,6 +14,10 @@ import {
 import { disconnectPrisma, getPrisma } from "@/lib/prisma";
 
 const prisma = getPrisma();
+
+async function storeIdNow(): Promise<string> {
+  return (await prisma.store.findFirstOrThrow()).id;
+}
 const actor = { name: "depo-sorumlusu" };
 
 async function resetDatabase(): Promise<void> {
@@ -87,7 +91,7 @@ describe("ürün bilgi kartı oluşturma", () => {
     expect(card.attributes).toHaveLength(2);
     expect(card.verifiedBy).toBeNull();
 
-    const history = await getProductInfoHistory(card.id, { prisma });
+    const history = await getProductInfoHistory(await storeIdNow(), card.id, { prisma });
     expect(history.map((event) => event.action)).toEqual(["CREATED"]);
     expect(history[0].actor).toBe("depo-sorumlusu");
   });
@@ -144,7 +148,7 @@ describe("doğrulama ve değişiklik geçmişi", () => {
     expect(verified.verifiedBy).toBe("depo-sorumlusu");
     expect(verified.verifiedAt).toBeInstanceOf(Date);
 
-    const history = await getProductInfoHistory(card.id, { prisma });
+    const history = await getProductInfoHistory(await storeIdNow(), card.id, { prisma });
     expect(history.map((event) => event.action)).toEqual(["CREATED", "VERIFIED"]);
     expect(history[1].note).toBe("tedarikçi teyidi");
   });
@@ -179,7 +183,7 @@ describe("doğrulama ve değişiklik geçmişi", () => {
     expect(updated.status).toBe("DRAFT");
     expect(updated.verifiedBy).toBeNull();
 
-    const history = await getProductInfoHistory(card.id, { prisma });
+    const history = await getProductInfoHistory(await storeIdNow(), card.id, { prisma });
     expect(history.map((event) => event.action)).toEqual(["CREATED", "VERIFIED", "UPDATED", "UNVERIFIED"]);
 
     const changes = history[2].changes as {
@@ -215,13 +219,13 @@ describe("panel araması", () => {
       { prisma },
     );
 
-    expect((await listProductInfos({ query: "VAR-1" }, { prisma })).map((item) => item.productMainId)).toEqual([
+    expect((await listProductInfos(await storeIdNow(), { query: "VAR-1" }, { prisma })).map((item) => item.productMainId)).toEqual([
       "MAIN-ABC",
     ]);
-    expect((await listProductInfos({ query: "ahşap" }, { prisma })).map((item) => item.productMainId)).toEqual([
+    expect((await listProductInfos(await storeIdNow(), { query: "ahşap" }, { prisma })).map((item) => item.productMainId)).toEqual([
       "MAIN-XYZ",
     ]);
-    expect(await listProductInfos({ query: "yok-böyle" }, { prisma })).toHaveLength(0);
+    expect(await listProductInfos(await storeIdNow(), { query: "yok-böyle" }, { prisma })).toHaveLength(0);
   });
 
   it("duruma göre filtreler", async () => {
@@ -230,8 +234,8 @@ describe("panel araması", () => {
     await seedCard(storeId, { productMainId: "MAIN-2" });
     await verifyProductInfo({ id: card.id, actor }, { prisma });
 
-    expect(await listProductInfos({ status: "VERIFIED" }, { prisma })).toHaveLength(1);
-    expect(await listProductInfos({ status: "DRAFT" }, { prisma })).toHaveLength(1);
+    expect(await listProductInfos(await storeIdNow(), { status: "VERIFIED" }, { prisma })).toHaveLength(1);
+    expect(await listProductInfos(await storeIdNow(), { status: "DRAFT" }, { prisma })).toHaveLength(1);
   });
 });
 

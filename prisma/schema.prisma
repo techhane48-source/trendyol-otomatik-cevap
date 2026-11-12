@@ -366,6 +366,8 @@ model SyncRun {
 /// Anahtar, prompt metni veya müşteri verisi SAKLANMAZ.
 model LlmUsage {
   id            String  @id @default(cuid())
+  /// Mağaza kapsamı (eski kayıtlarda backfill ile dolar)
+  storeId       String?
   provider      String
   model         String
   promptVersion String
@@ -398,6 +400,7 @@ model LlmUsage {
 /// Kalite değerlendirme seti (30–50 örnek).
 model QualitySet {
   id                String   @id @default(cuid())
+  storeId           String
   name              String
   createdBy         String
   /// Sabitlenen örnek soru kimlikleri (tekrar çalıştırmada aynı sorular kullanılır)
@@ -413,6 +416,7 @@ model QualitySet {
 /// Bir setin tek değerlendirme koşusu (prompt sürümü karşılaştırması için).
 model QualityRun {
   id            String     @id @default(cuid())
+  storeId       String
   setId         String
   set           QualitySet @relation(fields: [setId], references: [id], onDelete: Cascade)
   promptVersion String

@@ -211,6 +211,7 @@ export interface ChangeRequestResult {
 export async function createChangeRequestFromQuestion(
   input: {
     questionId: string;
+    storeId?: string;
     actor: OrderActor;
     requestedWidthCm?: number | null;
     requestedHeightCm?: number | null;
@@ -223,7 +224,9 @@ export async function createChangeRequestFromQuestion(
   const env = getEnv();
 
   const question = await prisma.question.findUnique({ where: { id: input.questionId } });
-  if (!question) throw new OrderError("QUESTION_NOT_FOUND", "Soru bulunamadı.");
+  if (!question || (input.storeId && question.storeId !== input.storeId)) {
+    throw new OrderError("QUESTION_NOT_FOUND", "Soru bulunamadı.");
+  }
 
   const extracted = extractOrderNumber(question.text);
   if (!extracted.value) {
@@ -621,12 +624,14 @@ async function resolveProductName(
 }
 
 export async function listChangeRequests(
+  storeId: string,
   input: { status?: string; orderNumber?: string; limit?: number } = {},
   deps: OrderDeps = {},
 ): Promise<ChangeRequestView[]> {
   const prisma = deps.prisma ?? getPrisma();
   const rows = await prisma.orderChangeRequest.findMany({
     where: {
+      storeId,
       ...(input.status ? { status: input.status as never } : {}),
       ...(input.orderNumber ? { orderNumber: input.orderNumber } : {}),
     },
@@ -660,12 +665,13 @@ export async function listChangeRequests(
 }
 
 /** Üretim personeli için onaylı ölçü değişiklikleri (yazdırılabilir). */
-export async function listApprovedForProduction(deps: OrderDeps = {}): Promise<ChangeRequestView[]> {
-  return listChangeRequests({ status: "APPROVED", limit: 100 }, deps);
+export async function listApprovedForProduction(storeId: string, deps: OrderDeps = {}): Promise<ChangeRequestView[]> {
+  return listChangeRequests(storeId, { status: "APPROVED", limit: 100 }, deps);
 }
 
 /** Sipariş araması: yerel ayna + (varsa) canlı durum. */
 export async function searchOrders(
+  storeId: string,
   input: { orderNumber: string },
   deps: OrderDeps = {},
 ): Promise<{
@@ -674,7 +680,7 @@ export async function searchOrders(
 }> {
   const prisma = deps.prisma ?? getPrisma();
   const local = await prisma.order.findMany({
-    where: { orderNumber: input.orderNumber },
+    where: { storeId, orderNumber: input.orderNumber },
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { lines: true } } },
   });

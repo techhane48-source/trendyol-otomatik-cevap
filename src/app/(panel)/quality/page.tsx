@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { requireUser } from "@/lib/auth/session";
 import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
 import { getEnv } from "@/lib/env";
 import {
@@ -64,6 +65,7 @@ export default async function QualityPage({
 }: {
   searchParams: Promise<{ ok?: string; hata?: string; run?: string }>;
 }) {
+  const user = await requireUser();
   const store = await cookies();
   const access = checkAccess(store.get(ACCESS_COOKIE_NAME)?.value ?? null);
   const env = getEnv();
@@ -78,9 +80,9 @@ export default async function QualityPage({
   }
 
   const params = await searchParams;
-  const [sets, runs, usage] = await Promise.all([listQualitySets(), listQualityRuns(), getUsageReport()]);
+  const [sets, runs, usage] = await Promise.all([listQualitySets(user.storeId), listQualityRuns(user.storeId), getUsageReport(user.storeId)]);
   const selectedRunId = params.run ?? runs[0]?.runId ?? null;
-  const items = selectedRunId ? await listRunItems(selectedRunId) : [];
+  const items = selectedRunId ? await listRunItems(user.storeId, selectedRunId) : [];
   const selectedRun = runs.find((run) => run.runId === selectedRunId) ?? null;
 
   return (

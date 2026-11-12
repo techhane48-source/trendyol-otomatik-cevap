@@ -58,7 +58,7 @@ function requireActor(actor: QualityActor | undefined | null): string {
 
 /** Gerçek sorulardan (kişisel verisi maskelenmiş) değerlendirme seti oluşturur. */
 export async function createQualitySet(
-  input: { name?: string; sampleCount: number; actor: QualityActor },
+  input: { storeId: string; name?: string; sampleCount: number; actor: QualityActor },
   deps: QualityDeps = {},
 ): Promise<{ id: string; name: string; sampleCount: number }> {
   const actorName = requireActor(input.actor);
@@ -73,6 +73,7 @@ export async function createQualitySet(
   }
 
   const questions = await prisma.question.findMany({
+    where: { storeId: input.storeId },
     orderBy: { createdAt: "desc" },
     take: requested,
     select: { id: true },
@@ -88,6 +89,7 @@ export async function createQualitySet(
     data: {
       name,
       createdBy: actorName,
+      storeId: input.storeId,
       sampleQuestionIds: questions.map((item) => item.id) as unknown as object,
       sampleCount: questions.length,
     },
@@ -157,17 +159,19 @@ export interface QualityRunSummary {
 
 /** Mevcut bir seti (aynı sorularla) yeniden değerlendirir. */
 export async function startQualityRun(
-  input: { setId: string; actor: QualityActor },
+  input: { setId: string; storeId?: string; actor: QualityActor },
   deps: QualityDeps = {},
 ): Promise<{ runId: string; itemCount: number }> {
   const actorName = requireActor(input.actor);
   const prisma = deps.prisma ?? getPrisma();
   const env = getEnv();
+  const set = await prisma.qualitySet.findFirst({
+    where: { id: input.setId, ...(input.storeId ? { storeId: input.storeId } : {}) },
+  });
+  if (!set) throw new QualityError("SET_NOT_FOUND", "Değerlendirme seti bulunamadı.");
+
   const provider = deps.provider ?? createLlmProvider(env);
   const pricing = resolvePricing(env);
-
-  const set = await prisma.qualitySet.findUnique({ where: { id: input.setId } });
-  if (!set) throw new QualityError("SET_NOT_FOUND", "Değerlendirme seti bulunamadı.");
 
   const ids = Array.isArray(set.sampleQuestionIds) ? (set.sampleQuestionIds as string[]) : [];
   if (ids.length === 0) throw new QualityError("EMPTY_SET", "Bu sette örnek soru yok.");
@@ -184,6 +188,7 @@ export async function startQualityRun(
   const run = await prisma.qualityRun.create({
     data: {
       setId: set.id,
+    storeId: set.storeId,
       promptVersion: env.LLM_PROMPT_VERSION,
       provider: provider.name,
       model: provider.model,
@@ -355,10 +360,11 @@ export async function scoreQualityItem(
 }
 
 /** Koşu özetleri + panel metrikleri. */
-export async function listQualityRuns(deps: QualityDeps = {}): Promise<QualityRunSummary[]> {
+export async function listQualityRuns(storeId: string, deps: QualityDeps = {}): Promise<QualityRunSummary[]> {
   const prisma = deps.prisma ?? getPrisma();
 
   const runs = await prisma.qualityRun.findMany({
+    where: { storeId },
     orderBy: { startedAt: "desc" },
     take: 20,
     include: { set: { select: { name: true } }, items: true },
@@ -409,8 +415,10 @@ export interface QualityItemView {
   humanNote: string | null;
 }
 
-export async function listRunItems(runId: string, deps: QualityDeps = {}): Promise<QualityItemView[]> {
+export async function listRunItems(storeId: string, runId: string, deps: QualityDeps = {}): Promise<QualityItemView[]> {
   const prisma = deps.prisma ?? getPrisma();
+  const run = await prisma.qualityRun.findFirst({ where: { id: runId, storeId }, select: { id: true } });
+  if (!run) return [];
   const items = await prisma.qualityItem.findMany({ where: { runId }, orderBy: { createdAt: "asc" } });
 
   return items.map((item) => ({
@@ -426,20 +434,20 @@ export async function listRunItems(runId: string, deps: QualityDeps = {}): Promi
   }));
 }
 
-export async function listQualitySets(deps: QualityDeps = {}) {
+export async function listQualitySets(storeId: string, deps: QualityDeps = {}) {
   const prisma = deps.prisma ?? getPrisma();
-  return prisma.qualitySet.findMany({ orderBy: { createdAt: "desc" }, take: 20 });
+  return prisma.qualitySet.findMany({ where: { storeId }, orderBy: { createdAt: "desc" }, take: 20 });
 }
 
 /** Günlük ve toplam kullanım/maliyet raporu (başarısız çağrılar dahil). */
-export async function getUsageReport(deps: QualityDeps = {}) {
+export async function getUsageReport(storeId: string, deps: QualityDeps = {}) {
   const prisma = deps.prisma ?? getPrisma();
 
   const [total, failures, successAgg, daily] = await Promise.all([
-    prisma.llmUsage.count(),
-    prisma.llmUsage.count({ where: { outcome: "ERROR" } }),
+    prisma.llmUsage.count({ where: { storeId } }),
+    prisma.llmUsage.count({ where: { storeId, outcome: "ERROR" } }),
     prisma.llmUsage.aggregate({
-      where: { outcome: "SUCCESS" },
+      where: { storeId, outcome: "SUCCESS" },
       _sum: { totalTokens: true, estimatedCostUSD: true, durationMs: true },
       _avg: { durationMs: true },
       _count: true,
@@ -450,6 +458,7 @@ export async function getUsageReport(deps: QualityDeps = {}) {
              COALESCE(SUM("totalTokens"), 0)::bigint AS tokens,
              COALESCE(SUM("estimatedCostUSD"), 0)::float8 AS cost
       FROM llm_usages
+      WHERE "storeId" = ${storeId}
       GROUP BY 1
       ORDER BY 1 DESC
       LIMIT 14

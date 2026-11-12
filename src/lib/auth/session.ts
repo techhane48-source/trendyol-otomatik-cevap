@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getPrisma } from "@/lib/prisma";
-import { ACCESS_COOKIE_NAME, checkAccess } from "@/lib/auth";
+import { ACCESS_COOKIE_NAME, checkAccess, extractBearerToken } from "@/lib/auth";
 import { hashToken, newSessionToken, type SessionUser } from "@/lib/auth/users";
 
 /**
@@ -59,6 +59,24 @@ export async function destroyCurrentSession() {
   await clearSessionCookie();
 }
 
+/**
+ * Eski paylaşımlı anahtar yalnızca mağazada aktif OWNER hesabı YOKKEN çalışır.
+ * Gerçek sahip hesabı açıldığı anda anahtar yolu kendiliğinden kapanır.
+ */
+export async function hasActiveOwner(): Promise<boolean> {
+  const prisma = getPrisma();
+  const owners = await prisma.user.count({ where: { role: "OWNER", active: true } });
+  return owners > 0;
+}
+
+export async function legacyLoginAllowed(): Promise<boolean> {
+  const mode = (process.env.LEGACY_LOGIN ?? "").toLowerCase();
+  // Acil durum anahtarı: bilinçli olarak "on" yapılmadıkça kapalıdır.
+  if (mode === "off") return false;
+  if (mode === "on") return true;
+  return !(await hasActiveOwner());
+}
+
 export async function sessionUserFromToken(token: string | null | undefined): Promise<SessionUser | null> {
   if (!token) return null;
   const prisma = getPrisma();
@@ -104,6 +122,8 @@ export async function currentUser(): Promise<SessionUser | null> {
   const session = await sessionUserFromToken(store.get(SESSION_COOKIE)?.value);
   if (session) return session;
 
+  if (!(await legacyLoginAllowed())) return null;
+
   const legacy = checkAccess(store.get(ACCESS_COOKIE_NAME)?.value);
   if (!legacy.ok) return null;
 
@@ -119,6 +139,52 @@ export async function currentUser(): Promise<SessionUser | null> {
     name: "Eski anahtar",
     role: "ADMIN",
   };
+}
+
+/**
+ * API route'ları için mağaza kapsamı: oturum varsa onun mağazası, yoksa geçiş
+ * döneminde eski anahtarın bağlı olduğu ilk mağaza (yalnızca tek mağazalı kurulum).
+ */
+export async function apiScope(): Promise<{ storeId: string; role: SessionUser["role"]; legacy: boolean } | null> {
+  const store = await cookies();
+  const session = await sessionUserFromToken(store.get(SESSION_COOKIE)?.value);
+  if (session) return { storeId: session.storeId, role: session.role, legacy: false };
+
+  if (!(await legacyLoginAllowed())) return null;
+  const legacy = checkAccess(store.get(ACCESS_COOKIE_NAME)?.value);
+  if (!legacy.ok) return null;
+
+  const prisma = getPrisma();
+  const firstStore = await prisma.store.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!firstStore) return null;
+  return { storeId: firstStore.id, role: "ADMIN", legacy: true };
+}
+
+/** Route handler'lar için çerezleri Request başlığından okuyan kapsam çözümü. */
+export async function apiScopeFromRequest(request: Request): Promise<{ storeId: string; role: SessionUser["role"]; legacy: boolean } | null> {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const readCookie = (name: string): string | null => {
+    for (const part of cookieHeader.split(";")) {
+      const [key, ...rest] = part.trim().split("=");
+      if (key === name) return decodeURIComponent(rest.join("="));
+    }
+    return null;
+  };
+
+  const session = await sessionUserFromToken(readCookie(SESSION_COOKIE));
+  if (session) return { storeId: session.storeId, role: session.role, legacy: false };
+
+  if (!(await legacyLoginAllowed())) return null;
+  const cookieToken = readCookie(ACCESS_COOKIE_NAME);
+  const bearer = extractBearerToken(request.headers.get("authorization"));
+  let legacy = checkAccess(cookieToken && cookieToken.length > 0 ? cookieToken : null);
+  if (!legacy.ok && bearer) legacy = checkAccess(bearer);
+  if (!legacy.ok) return null;
+
+  const prisma = getPrisma();
+  const firstStore = await prisma.store.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!firstStore) return null;
+  return { storeId: firstStore.id, role: "ADMIN", legacy: true };
 }
 
 export async function requireUser(roles?: SessionUser["role"][]): Promise<SessionUser> {
