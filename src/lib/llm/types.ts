@@ -25,6 +25,12 @@ export interface DraftContext {
   sizeGuidance?: string | null;
   /** Müşteri sipariş numarasını soruda verdiyse true: tekrar istenmez. */
   orderNumberProvided?: boolean;
+  /** GÖREV 016: Trendyol'dan çekilen güvenli sipariş özeti (yalnızca eşleşme doğrulandıysa) */
+  liveOrderText?: string | null;
+  /** Canlı sipariş verisinin çekildiği an (ISO) */
+  liveOrderAt?: string | null;
+  /** İade (claim) kayıt özeti; para hareketi iddiası içermez */
+  claimsText?: string | null;
 
   /* ---- GÖREV 012: niyet odaklı cevap motoru ---- */
   /** Algılanan birincil niyet (INTENT_LABELS anahtarı). */

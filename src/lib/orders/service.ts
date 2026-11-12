@@ -235,6 +235,20 @@ export async function createChangeRequestFromQuestion(
   }
 
   const orderNumber = extracted.value;
+
+  // GÖREV 016: birden fazla ölçü talebi tek belirsiz değişikliğe indirgenmez.
+  if (!input.requestedWidthCm && !input.requestedHeightCm) {
+    const pairs = [...question.text.matchAll(/(\d{2,4})\s*(?:cm)?\s*[-/ye]\s*(\d{2,4})/gi)]
+      .map((match) => `${Number(match[1])}x${Number(match[2])}`)
+      .filter((label, index, all) => all.indexOf(label) === index);
+    if (pairs.length > 1) {
+      throw new OrderError(
+        "MULTI_SIZE_REQUEST",
+        `Soruda birden fazla ölçü talebi var (${pairs.join(", ")}). Her talep ayrı ve açık biçimde kaydedilmeli; tek belirsiz değişiklik oluşturulmadı.`,
+      );
+    }
+  }
+
   const parsed = parseDimensions(question.text);
   const requestedWidthCm = input.requestedWidthCm ?? parsed.widthCm;
   const requestedHeightCm = input.requestedHeightCm ?? parsed.heightCm;

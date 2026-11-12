@@ -1064,3 +1064,69 @@ Kurallar: "doğrulanmış bilgimiz yok" → `NEEDS_INFO`; durum sorusuna yalnız
 | Niyet doğruluğu | %97 | %97 |
 
 Test: **400 test / 23 dosya**, typecheck 0, build 0.
+
+## GÖREV 016 — Canlı sipariş bağlamı ve gerçek durum cevapları
+
+**Branch:** `task-016-canli-siparis-baglami` (başlangıç `5183f95`)
+
+### 1. Gerçekten erişilebilen Trendyol alanları (salt okunur GET)
+
+Kaynak: `GET /integration/order/sellers/{sellerId}/orders?orderNumber=…` (Order Integration v2) ve `GET /integration/order/sellers/{sellerId}/claims?orderNumber=…`.
+
+| Alan | Erişim | Kullanım |
+|---|---|---|
+| `shipmentPackageStatus` / `status` | ✅ | Türkçe duruma eşlenir (Created/Awaiting/Picking/Invoiced/Shipped/Delivered/Cancelled/Returned/UnDelivered) |
+| `cargoProviderName` | ✅ | Kargo firması |
+| `cargoTrackingNumber` / `cargoTrackingLink` | ✅ | Yalnızca "takip var" bilgisi; numara cevaba/loga yazılmaz |
+| `estimatedDeliveryStartDate` / `EndDate` | ✅ | "TAHMİNİ kargoya teslim aralığı" — müşteriye teslim tarihi DEĞİL |
+| `agreedDeliveryDate` | ✅ | Mutabık teslim tarihi (varsa) |
+| `packageHistories[].status/createdDate` | ✅ | Teslim edilme zamanı |
+| `lastModifiedDate` | ✅ | Trendyol'daki son güncelleme |
+| `orderDate` | ✅ | Sipariş tarihi |
+| `customerId` | ✅ (yalnızca tuzlanmış özet) | Müşteri eşleştirmesi |
+| Adres/telefon/e-posta/isim/TCKN/ödeme | ❌ okunmaz | Şemada yok, saklanmaz |
+| İade kaydı (`claims`) | ✅ | Kayıt + durum |
+| Ücretin hesaba geçmesi (banka/PSP) | ❌ erişilemez | Asla iddia edilmez |
+
+### 2. Güvenli eşleştirme (`src/lib/orders/live.ts`)
+
+- Sipariş no yalnızca **bu satıcının** hesabında aranır (URL satıcıya bağlı).
+- **Sipariş numarası tek başına doğrulama sayılmaz:** `order.customerId` özeti, soruyu soran müşterinin özetiyle eşleşmeli.
+- Eşleşmezse → `MISMATCH`, kişisel detay prompt'a girmez, panelde uyarı çıkar, `HUMAN_REVIEW`.
+- Müşteri kimliği yoksa → `UNVERIFIED` (aynı davranış).
+- **Tazelik:** 10 dk içindeki yerel kopya kullanılır (`CACHE`), eskisi Trendyol'dan yeniden çekilir (`REMOTE`); `fetchedAt` kaydedilir ve panelde gösterilir.
+- API hatası → `UNAVAILABLE`; güncel durum iddiası kurulmaz.
+
+### 3. Cevap ve metrik kuralları
+
+- Durum/kargo sorusunda canlı kayıt eşleşmişse strateji `DIRECT`, durum Türkçe açıklanır.
+- Kargo takip numarası cevaba yazılmaz; "takip bilgisi sipariş detayında" denir.
+- Tahmini kargoya teslim aralığı ile müşteriye teslim tarihi ayrı tutulur.
+- İade soruları: claim kaydı gösterilir, "para hesaba geçti" **denmez**; `HUMAN_REVIEW`.
+- Canlı veri yokken durum/kargo/iade soruları `ANSWERED` sayılmaz (`HUMAN_REVIEW` veya `NEEDS_INFO`).
+- Çoklu ölçü talebi tek belirsiz değişikliğe indirgenmez: `MULTI_SIZE_REQUEST` ile reddedilir, her talep ayrı kayıt ister.
+
+### 4. Panel
+
+`/drafts` kartlarında:
+- **Kullanılan gerçek veri kaynakları** ve çekilme zamanı (`Trendyol sipariş API (canlı)` / `Yerel sipariş kopyası`).
+- Eşleşme güvenli değilse "Sipariş eşleşmesi: müşteri eşleşmedi / doğrulanamadı / bulunamadı / API'ye ulaşılamadı" uyarısı ve "kişisel sipariş detayı taslağa konmadı" notu.
+- İnsan onayı gereken taslaklar mevcut "İnsan incelemesi gerekli" rozetiyle ayrılır.
+
+### 5. Ölçüm (aynı 30 soru, canlı API açık)
+
+| Metrik | GÖREV 015 | GÖREV 016 |
+|---|---|---|
+| Canlı sipariş eşleşen soru | 0 | **4** (MATCHED) |
+| Bulunamayan sipariş | — | 2 (NOT_FOUND, dürüst) |
+| ANSWERED | 14 | 9 |
+| PARTIAL | 2 | 5 |
+| NEEDS_INFO | 10 | 11 |
+| HUMAN_REVIEW | 4 | 5 |
+| Somut cevap oranı | %63 | **%67** |
+| Yanlış bilgi | %0 | %0 |
+| Niyet doğruluğu | %97 | %97 |
+
+ANSWERED düşüşü bilinçli: canlı veri olmadan verilen politika cevapları artık "çözüldü" sayılmıyor; karşılığında 4 soru gerçek sipariş verisiyle yanıtlandı (biri teslim edildi, biri hazırlanıyor, ikisi iptal).
+
+Test: **420 test / 24 dosya**, typecheck 0, build 0.

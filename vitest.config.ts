@@ -27,6 +27,7 @@ export default defineConfig({
       DATABASE_URL: connectionUrl(TEST_PG),
       TRENDYOL_BASE_URL: "https://apigw.trendyol.test/integration/qna",
       TRENDYOL_SELLER_ID: "123456",
+      LIVE_ORDER_LOOKUP: "0",
       TRENDYOL_API_KEY: "test-api-key",
       TRENDYOL_API_SECRET: "test-api-secret",
       SYNC_PAGE_SIZE: "50",

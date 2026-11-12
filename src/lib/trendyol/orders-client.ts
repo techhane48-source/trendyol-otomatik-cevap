@@ -29,21 +29,65 @@ const orderLineSchema = z
     status: raw.status ?? null,
   }));
 
-const orderPackageSchema = z
+export interface OrderPackageDto {
+  shipmentPackageId: string | null;
+  orderNumber: string | null;
+  status: string;
+  shipmentPackageStatus?: string;
+  orderDate: Date | null;
+  customerId: string | null;
+  cargoProviderName?: string | null;
+  cargoTrackingNumber?: string | null;
+  cargoTrackingLink?: string | null;
+  estimatedDeliveryStartDate?: Date | null;
+  estimatedDeliveryEndDate?: Date | null;
+  agreedDeliveryDate?: Date | null;
+  lastModifiedDate?: Date | null;
+  packageHistories?: Array<{ status: string; at: Date | null }>;
+  lines: OrderLineDto[];
+}
+
+const orderPackageSchema: z.ZodType<OrderPackageDto> = z
   .looseObject({
     shipmentPackageId: z.union([z.number(), z.string()]).optional(),
     orderNumber: z.union([z.number(), z.string()]).optional(),
     status: z.string().optional(),
+    shipmentPackageStatus: z.string().optional(),
     orderDate: z.number().optional(),
     customerId: z.union([z.number(), z.string()]).optional(),
+    cargoProviderName: z.string().optional(),
+    cargoTrackingNumber: z.union([z.number(), z.string()]).optional(),
+    cargoTrackingLink: z.string().optional(),
+    estimatedDeliveryStartDate: z.number().optional(),
+    estimatedDeliveryEndDate: z.number().optional(),
+    agreedDeliveryDate: z.number().optional(),
+    lastModifiedDate: z.number().optional(),
+    packageHistories: z
+      .array(z.looseObject({ status: z.string().optional(), createdDate: z.number().optional() }))
+      .optional(),
     lines: z.array(orderLineSchema).optional(),
   })
   .transform((raw) => ({
     shipmentPackageId: raw.shipmentPackageId === undefined ? null : String(raw.shipmentPackageId),
     orderNumber: raw.orderNumber === undefined ? null : String(raw.orderNumber),
     status: raw.status ?? "Unknown",
+    shipmentPackageStatus: raw.shipmentPackageStatus ?? raw.status ?? "Unknown",
     orderDate: raw.orderDate ? new Date(raw.orderDate) : null,
     customerId: raw.customerId === undefined ? null : String(raw.customerId),
+    cargoProviderName: raw.cargoProviderName ?? null,
+    cargoTrackingNumber:
+      raw.cargoTrackingNumber === undefined || raw.cargoTrackingNumber === null
+        ? null
+        : String(raw.cargoTrackingNumber),
+    cargoTrackingLink: raw.cargoTrackingLink ?? null,
+    estimatedDeliveryStartDate: raw.estimatedDeliveryStartDate ? new Date(raw.estimatedDeliveryStartDate) : null,
+    estimatedDeliveryEndDate: raw.estimatedDeliveryEndDate ? new Date(raw.estimatedDeliveryEndDate) : null,
+    agreedDeliveryDate: raw.agreedDeliveryDate ? new Date(raw.agreedDeliveryDate) : null,
+    lastModifiedDate: raw.lastModifiedDate ? new Date(raw.lastModifiedDate) : null,
+    packageHistories: (raw.packageHistories ?? []).map((item) => ({
+      status: item.status ?? "Unknown",
+      at: item.createdDate ? new Date(item.createdDate) : null,
+    })),
     lines: raw.lines ?? [],
   }));
 
@@ -56,7 +100,6 @@ const ordersPageSchema = z.looseObject({
 });
 
 export type OrderLineDto = z.infer<typeof orderLineSchema>;
-export type OrderPackageDto = z.infer<typeof orderPackageSchema>;
 
 export interface OrdersQuery {
   page?: number;

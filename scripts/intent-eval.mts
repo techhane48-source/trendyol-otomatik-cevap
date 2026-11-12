@@ -130,6 +130,8 @@ async function main() {
         intents: detectIntents ? detectIntents(question.text).all : null,
         strategy: (draft as unknown as { strategy?: string }).strategy ?? null,
         resolution: draft.resolution,
+        orderMatch: draft.orderMatch ?? null,
+        contextSources: draft.contextSources ?? [],
         evasive,
         concrete,
         wrongInfo,

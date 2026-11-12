@@ -262,6 +262,11 @@ model AnswerDraft {
   /// Taslakta eksik/doğrulanmamış görünen bilgiler (insan onayı için)
   missingInfo   Json?
 
+  /// GÖREV 016: taslakta kullanılan gerçek veri kaynakları [{ type, label, at }]
+  contextSources Json?
+  /// GÖREV 016: sipariş eşleşme sonucu (MATCHED | MISMATCH | UNVERIFIED | NOT_FOUND | UNAVAILABLE)
+  orderMatch     String?
+
   /// Üretim ölçümleri (maliyet raporu için)
   durationMs       Int?
   inputTokens      Int?
@@ -467,6 +472,23 @@ model Order {
   status           String
   rawStatus        String?
   orderedAt        DateTime?
+  /// Kargo firması adı (Trendyol cargoProviderName)
+  cargoProviderName     String?
+  /// Kargo takip numarası — yalnızca müşteriye takip bilgisi vermek için; loglanmaz.
+  cargoTrackingNumber   String?
+  /// Kargo takip bağlantısı (varsa)
+  cargoTrackingLink     String?
+  /// Trendyol tahmini kargoya teslim aralığı (müşteriye teslim tarihi DEĞİLDİR)
+  estimatedDeliveryStart DateTime?
+  estimatedDeliveryEnd   DateTime?
+  /// Satıcı ile mutabık teslim tarihi (varsa)
+  agreedDeliveryDate     DateTime?
+  /// Trendyol'da "Delivered" durumuna geçtiği zaman (varsa)
+  deliveredAt            DateTime?
+  /// Trendyol tarafındaki son değişiklik zamanı
+  lastModifiedAt         DateTime?
+  /// Bu kaydın Trendyol'dan son çekildiği an (tazelik göstergesi)
+  fetchedAt              DateTime?
   /// Müşteri kimliğinin tuzlanmış özeti (düz metin PII saklanmaz)
   customerRef      String?
   syncedAt         DateTime @default(now())

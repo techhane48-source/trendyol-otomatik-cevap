@@ -82,6 +82,27 @@ export function buildDraftMessages(context: DraftContext): LlmMessage {
     );
   }
 
+  if (context.liveOrderText) {
+    const at = context.liveOrderAt
+      ? new Date(context.liveOrderAt).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul", dateStyle: "short", timeStyle: "short" })
+      : "bilinmiyor";
+    lines.push("", `CANLI SİPARİŞ BİLGİSİ (Trendyol, çekildi: ${at}):`, context.liveOrderText);
+    lines.push(
+      "Bu bölümdeki veriyi kullan; burada yazmayan durumu tahmin etme.",
+      "Kargo takip numarasını cevaba yazma; müşteri sipariş detayında görür.",
+      "Trendyol tahmini kargoya teslim tarihi ile müşteriye teslim tarihini karıştırma.",
+      "Bu veri eskiyse (uyarı varsa) güncel durum iddiası kurma.",
+    );
+  }
+
+  if (context.claimsText) {
+    lines.push("", "İADE (CLAIM) BİLGİSİ:", context.claimsText);
+    lines.push(
+      "İade kaydı görünmesi parayı geri aldığı anlamına gelmez; banka/ödeme sağlayıcı verisi yok.",
+      "Ücret iadesinin tamamlandığını veya hesaba geçtiğini SÖYLEME.",
+    );
+  }
+
   if (context.orderNumberProvided) {
     lines.push(
       "",

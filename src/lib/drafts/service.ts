@@ -12,6 +12,10 @@ import { searchHistoricalAnswers, type HistoryMatch } from "@/lib/history/search
 import { LlmNotConfiguredError, LlmRequestError, type LlmProvider } from "./../llm/types";
 import { computeCostUSD, resolvePricing } from "./../llm/usage";
 import { buildOrderGuidance, detectOrderClaimViolations, type OrderChangeState } from "@/lib/orders/ai-guidance";
+import { extractOrderNumber } from "@/lib/orders/decision";
+import { describeLiveOrder, getLiveOrder, type LiveOrderResult } from "@/lib/orders/live";
+import { createClaimsClient, describeClaims, type ClaimsClient } from "@/lib/trendyol/claims-client";
+import type { OrdersClient } from "@/lib/trendyol/orders-client";
 import { isUsableForDraft, matchProductInfo } from "@/lib/products/matching";
 import { findProductInfoForQuestion, type ProductAttribute } from "@/lib/products/service";
 import { FIELD_DEFS, verifiedAttributes } from "@/lib/products/bank";
@@ -112,6 +116,9 @@ export interface DraftDeps {
   prisma?: PrismaClient;
   /** Testlerde sahte sağlayıcı enjekte edilir. */
   provider?: LlmProvider;
+  /** GÖREV 016: testlerde sahte sipariş/iade istemcisi enjekte edilir. */
+  ordersClient?: Pick<OrdersClient, "fetchOrdersPage">;
+  claimsClient?: Pick<ClaimsClient, "fetchClaims">;
 }
 
 export interface DraftView {
@@ -163,6 +170,10 @@ export interface DraftView {
     productMatch: boolean;
     reason: string;
   }>;
+  /** GÖREV 016: taslakta kullanılan gerçek veri kaynakları */
+  contextSources: Array<{ type: string; label: string; at: string | null }>;
+  /** GÖREV 016: sipariş eşleşmesi (güvenli değilse uyarı gösterilir) */
+  orderMatch: "MATCHED" | "MISMATCH" | "UNVERIFIED" | "NOT_FOUND" | "UNAVAILABLE" | null;
   createdBy: string | null;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -205,6 +216,8 @@ function toView(draft: {
   text: string;
   warnings: unknown;
   model: string | null;
+  contextSources?: unknown;
+  orderMatch?: string | null;
   promptVersion: string | null;
   productInfoId?: string | null;
   productMatch?: string | null;
@@ -247,6 +260,10 @@ function toView(draft: {
     usageEstimated: draft.usageEstimated ?? false,
     historyUsed: Array.isArray(draft.historyUsed) ? (draft.historyUsed as DraftView["historyUsed"]) : [],
     resolution: (draft.resolution as DraftView["resolution"]) ?? "GENERIC",
+    contextSources: Array.isArray(draft.contextSources)
+      ? (draft.contextSources as Array<{ type: string; label: string; at: string | null }>)
+      : [],
+    orderMatch: (draft.orderMatch as DraftView["orderMatch"]) ?? null,
     intent: ((draft.intent as Intent | null) ?? "OTHER") as Intent,
     intentLabel: INTENT_LABELS[((draft.intent as Intent | null) ?? "OTHER") as Intent] ?? INTENT_LABELS.OTHER,
     strategy: ((draft.strategy as AnswerStrategy | null) ?? "ASK_DETAIL") as AnswerStrategy,
@@ -382,6 +399,56 @@ export async function createAiDraft(
   const orderGuidance = buildOrderGuidance(orderState);
 
   const sanitized = sanitizeQuestion(question.text);
+  const contextSources: Array<{ type: string; label: string; at: string | null }> = [];
+
+  // ---- GÖREV 016: canlı sipariş bağlamı (salt okunur GET, müşteri eşleşmesi zorunlu) ----
+  const orderNumber = extractOrderNumber(question.text).value;
+  let liveOrder: LiveOrderResult | null = null;
+  let liveOrderText: string | null = null;
+  let claimsText: string | null = null;
+  let orderMatch: DraftView["orderMatch"] = null;
+  const orderNotices: string[] = [];
+
+  if (orderNumber && (deps.ordersClient || getEnv().LIVE_ORDER_LOOKUP !== "0")) {
+    try {
+      liveOrder = await getLiveOrder(
+        { storeId: question.storeId, orderNumber, questionCustomerId: question.customerId },
+        { prisma, client: deps.ordersClient },
+      );
+    } catch {
+      liveOrder = { kind: "UNAVAILABLE", reason: "Sipariş verisi alınamadı." };
+    }
+    orderMatch = liveOrder.kind === "NOT_FOUND" ? "NOT_FOUND" : liveOrder.kind;
+
+    if (liveOrder.kind === "MATCHED") {
+      liveOrderText = describeLiveOrder(liveOrder.order);
+      contextSources.push({
+        type: liveOrder.order.source === "REMOTE" ? "TRENDYOL_ORDER" : "ORDER_CACHE",
+        label:
+          liveOrder.order.source === "REMOTE"
+            ? "Trendyol sipariş API (canlı)"
+            : "Yerel sipariş kopyası (10 dk içinde çekildi)",
+        at: liveOrder.order.fetchedAt.toISOString(),
+      });
+    } else if (liveOrder.kind === "MISMATCH") {
+      orderNotices.push("Sipariş, soruyu soran müşteriyle eşleşmedi; kişisel sipariş detayı kullanılmadı.");
+    } else if (liveOrder.kind === "UNVERIFIED") {
+      orderNotices.push("Siparişin bu müşteriye ait olduğu doğrulanamadı; kişisel sipariş detayı kullanılmadı.");
+    } else if (liveOrder.kind === "UNAVAILABLE") {
+      orderNotices.push("Sipariş API'sine ulaşılamadı; güncel sipariş durumu iddiası kurulmadı.");
+    }
+  }
+
+  // İade/para sorularında claim kaydı yalnızca bağlam olarak eklenir; para hareketi iddiası kurulmaz.
+  const refundQuestion = /iade|para(?:y[ıi])?\s*geri|geri\s*[öo]deme|[üu]cret iadesi/i.test(question.text);
+  if (orderNumber && refundQuestion && liveOrder?.kind !== "UNAVAILABLE") {
+    try {
+      const claims = await (deps.claimsClient ?? createClaimsClient()).fetchClaims({ orderNumber });
+      claimsText = describeClaims(claims);
+    } catch {
+      claimsText = "- İade kaydı sorgulanamadı; iade durumu hakkında kesin bilgi verme.";
+    }
+  }
 
   // Geçmiş cevap hafızası: yalnızca aynı mağaza, cevabı olan ve WRONG/OUTDATED olmayan kayıtlar.
   // Metinler PII'den arındırılır; ham müşteri kimliği bağlama girmez.
@@ -507,14 +574,19 @@ export async function createAiDraft(
     if (ambiguity) sizeGuidance = [sizeGuidance, ambiguity].filter(Boolean).join("\n");
   }
 
+  // Eşleşmiş canlı sipariş varsa durum/kargo sorusu doğrudan cevaplanabilir.
+  if (liveOrder?.kind === "MATCHED" && (intent === "ORDER_STATUS" || intent === "SHIPPING") && strategy !== "DIRECT") {
+    strategy = "DIRECT";
+  }
+
   // Katalogda birebir aynı varyant varsa bu doğrulanmış bilgidir: doğrudan cevap verilebilir.
   if (sizeExactMatch && intent === "CUSTOM_SIZE" && strategy !== "DIRECT") {
     strategy = "DIRECT";
   }
 
   const productQuestion = intentInfo.all.some((item) => PRODUCT_INTENTS.includes(item));
-  // Onaylanmış canlı sipariş durumu da geçerli bir kaynaktır.
-  const liveOrderSource = orderState.kind === "APPROVED";
+  // Onaylanmış sipariş değişikliği veya eşleşmiş canlı sipariş geçerli kaynaktır.
+  const liveOrderSource = orderState.kind === "APPROVED" || liveOrder?.kind === "MATCHED";
   const noRelevantSource = coveredFieldKeys.length === 0 && coveredPolicyKeys.length === 0 && !liveOrderSource;
   const requiresHumanReview =
     strategy === "HUMAN_REVIEW" ||
@@ -543,6 +615,9 @@ export async function createAiDraft(
     strategy,
     sizeGuidance,
     orderNumberProvided: /\d{9,12}/.test(question.text ?? ""),
+    liveOrderText,
+    liveOrderAt: liveOrder?.kind === "MATCHED" ? liveOrder.order.fetchedAt.toISOString() : null,
+    claimsText,
     policies: relevantPolicies.map((policy) => ({ label: policy.label, value: policy.value })),
     missingForIntent,
     requiresHumanReview,
@@ -580,6 +655,8 @@ export async function createAiDraft(
     text,
     [question.productName, question.productMainId, productInfoText].filter(Boolean).join(" "),
   );
+
+  for (const notice of orderNotices) warnings.push({ kind: "ORDER", phrase: notice });
 
   const orderViolations = detectOrderClaimViolations(text, orderState);
   for (const violation of orderViolations) {
@@ -646,6 +723,8 @@ export async function createAiDraft(
     providedSize,
     factValues: usedFacts.map((fact) => fact.value),
     evasive,
+    refundQuestion: /iade|para(?:y[ıi])?\s*geri|geri\s*[öo]deme|[üu]cret iadesi/i.test(question.text),
+    paymentVerified: false,
     fabricatedSizes: sizeLabelsIn(text).filter(
       (label) =>
         !sizeLabelsIn(sanitized.text).includes(label) &&
@@ -712,6 +791,8 @@ export async function createAiDraft(
         totalTokens: completion.usage.totalTokens,
         estimatedCostUSD: costUSD,
         usageEstimated: completion.usage.estimated,
+        contextSources: contextSources.length > 0 ? (contextSources as unknown as object) : undefined,
+        orderMatch: orderMatch ?? undefined,
         resolution,
         intent,
         strategy,

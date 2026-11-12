@@ -15,7 +15,9 @@ export type WarningKind =
   | "STOCK"
   | "PROMISE"
   /** Geçmiş cevaptan gelen, güncelliği kanıtlanmamış bilgi */
-  | "STALE";
+  | "STALE"
+  /** Sipariş eşleşmesi/verisi güvenilir değil (GÖREV 016) */
+  | "ORDER";
 
 export interface DraftWarning {
   kind: WarningKind;

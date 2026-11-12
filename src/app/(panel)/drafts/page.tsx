@@ -27,6 +27,14 @@ function formatDate(value: Date | null | undefined): string {
   return value ? dateFormatter.format(value) : "—";
 }
 
+const ORDER_MATCH_LABELS: Record<string, string> = {
+  MATCHED: "doğrulandı",
+  MISMATCH: "müşteri eşleşmedi",
+  UNVERIFIED: "müşteri doğrulanamadı",
+  NOT_FOUND: "Trendyol'da bulunamadı",
+  UNAVAILABLE: "sipariş API'sine ulaşılamadı",
+};
+
 const STATUS_LABELS: Record<DraftView["status"], string> = {
   PENDING: "Onay bekliyor",
   NEEDS_INFO: "Bilgi eksik — düzenleyin",
@@ -213,6 +221,26 @@ export default async function DraftsPage({
                       <span className="badge">{STRATEGY_LABELS[latest.strategy]}</span>{" "}
                       {latest.requiresHumanReview ? <span className="badge waiting">İnsan incelemesi gerekli</span> : null}
                     </div>
+
+                    {latest.orderMatch && latest.orderMatch !== "MATCHED" ? (
+                      <div style={{ marginBottom: 8 }}>
+                        <span className="badge waiting">
+                          Sipariş eşleşmesi: {ORDER_MATCH_LABELS[latest.orderMatch] ?? latest.orderMatch}
+                        </span>
+                        <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>
+                          Kişisel sipariş detayı taslağa konmadı; insan onayı gerekli.
+                        </span>
+                      </div>
+                    ) : null}
+
+                    {latest.contextSources.length > 0 ? (
+                      <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                        <strong>Kullanılan gerçek veri kaynakları:</strong>{" "}
+                        {latest.contextSources
+                          .map((source) => `${source.label}${source.at ? ` · ${formatDate(new Date(source.at))}` : ""}`)
+                          .join(" | ")}
+                      </div>
+                    ) : null}
 
                     {latest.policiesUsed.length > 0 ? (
                       <div style={{ marginBottom: 8, fontSize: 13 }}>

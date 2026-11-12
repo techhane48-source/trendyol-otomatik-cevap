@@ -66,6 +66,8 @@ const envSchema = z.object({
   LLM_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
   LLM_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(20_000),
   LLM_MAX_TOKENS: z.coerce.number().int().min(64).max(4_096).default(600),
+  /** GÖREV 016: canlı sipariş sorgusu (testlerde "0" ile kapatılır). */
+  LIVE_ORDER_LOOKUP: z.enum(["0", "1"]).default("1"),
   LLM_TEMPERATURE: z.coerce.number().min(0).max(1.5).default(0.2),
   /** Prompt sürümü: üretilen taslağın hangi kurallarla yazıldığını izlemek için. */
   LLM_PROMPT_VERSION: z.string().trim().min(1).default("v2-intent"),

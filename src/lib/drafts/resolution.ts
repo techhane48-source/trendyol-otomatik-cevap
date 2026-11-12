@@ -44,6 +44,10 @@ export interface QualityInput {
   evasive?: boolean;
   /** Cevapta geçen ama hiçbir kaynakta bulunmayan ölçüler (uydurulmuş ölçü). */
   fabricatedSizes?: string[];
+  /** İade/ücret iadesi sorusu mu? */
+  refundQuestion?: boolean;
+  /** Banka/PSP ücret iadesi doğrulandı mı? (bu sistemde varsayılan: hayır) */
+  paymentVerified?: boolean;
 }
 
 export interface QualityResult {
@@ -102,6 +106,10 @@ const STATUS_PATTERNS: RegExp[] = [
   /takip/i,
   /\biade\b/i,
   /yanl[ıi][şs] (?:ürün|g[öo]nderim)/i,
+  /kargoya[^.]{0,25}(?:verilir|verilmiş|ne zaman)/i,
+  /ne zaman (?:gelir|kargoda|teslim)/i,
+  /ka[çc] g[üu]nde/i,
+  /hangi a[şs]amada/i,
   /hesab[ıi]ma (?:ge[çc]ti|ge[çc]medi)/i,
   /para(?:m[ıi]|y[ıi])? (?:geri )?gelmedi/i,
   /zam m[ıi] geldi/i,
@@ -171,6 +179,11 @@ export function evaluateAnswerQuality(input: QualityInput): QualityResult {
     return { quality: "HUMAN_REVIEW", reasons, unnecessaryAsk };
   }
 
+  if (input.refundQuestion && !input.paymentVerified) {
+    reasons.push("İade/ücret sorusu: banka/ödeme sağlayıcı verisi yok, insan incelemesi gerekir");
+    return { quality: "HUMAN_REVIEW", reasons, unnecessaryAsk };
+  }
+
   if (statusQuestion && !input.liveOrderVerified) {
     reasons.push("Soru gerçekleşmiş durumu/aksiyonu soruyor; canlı sipariş/üretim verisi yok");
     return { quality: "HUMAN_REVIEW", reasons, unnecessaryAsk };
@@ -204,7 +217,12 @@ export function evaluateAnswerQuality(input: QualityInput): QualityResult {
     return { quality: "PARTIAL", reasons, unnecessaryAsk };
   }
 
-  if (concrete || factMentioned) {
+  const stageMentioned =
+    /kargoya veril|haz[ıi]rlan|teslim edil|faturaland|i[şs]leme al[ıi]nd[ıi]|iptal edil/i.test(answer);
+  const statusExplainedFromLive = input.liveOrderVerified && statusQuestion && stageMentioned;
+
+  if (concrete || factMentioned || statusExplainedFromLive) {
+    if (statusExplainedFromLive) reasons.push("Canlı sipariş verisiyle durum açıklandı");
     if (asksInfo) {
       reasons.push("Bilgi verildi ancak ek bilgi de istendi");
       return { quality: "PARTIAL", reasons, unnecessaryAsk };
